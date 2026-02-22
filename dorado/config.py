@@ -12,7 +12,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # GPU 0 is full; use GPU 1 instead
 DATASET_CONFIG = {
     "sft_samples": [20],
     "dpo_pairs": [3],
-    "candidates_per_question": [2],
+    "candidates_per_question": [4],
     "sft_dataset_name": ["tatsu-lab/alpaca"],
     "eval_split": ["test"],
     "eval_max_samples": [20],
