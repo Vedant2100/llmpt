@@ -1,0 +1,1 @@
+could you check whether the plan and the current implementation is in line with the paper. and whether it accurately does the experiments needed? if you cant read the pdf, you may use a subagent to convert it to txt and get that context. but plan.md and dorado_toy.ipynb you can read as you usually do.
