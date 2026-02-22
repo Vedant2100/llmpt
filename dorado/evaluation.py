@@ -64,12 +64,17 @@ def evaluate_model(
     is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
 
     try:
-        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+        from dorado.config import make_bnb_config
+
+        bnb_config = make_bnb_config(exp_config)
+        bits = exp_config.get("quantization_bits", 0)
+        load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
+        if bnb_config is not None:
+            load_kwargs["quantization_config"] = bnb_config
+        label = f"{bits}-bit" if bits > 0 else "fp16"
         if is_adapter:
-            print(f"Loading {model_label} as PEFT adapter (8-bit)...")
-            model = AutoModelForCausalLM.from_pretrained(
-                BASE, quantization_config=bnb_config, device_map="auto"
-            )
+            print(f"Loading {model_label} as PEFT adapter ({label})...")
+            model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
             if model_label == "DORADO" or "dorado" in model_path.lower():
                 if os.path.exists(SFT_OUT):
                     print("  Stacking SFT adapter...")
@@ -79,10 +84,8 @@ def evaluate_model(
             else:
                 model = PeftModel.from_pretrained(model, model_path)
         else:
-            print(f"Loading {model_label} as full model (8-bit)...")
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path, quantization_config=bnb_config, device_map="auto"
-            )
+            print(f"Loading {model_label} as full model ({label})...")
+            model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(BASE)
         if tokenizer.pad_token is None:

@@ -11,6 +11,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 from dorado.utils import clear_gpu
@@ -26,11 +27,15 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
     tokenizer = AutoTokenizer.from_pretrained(BASE)
     tokenizer.pad_token = tokenizer.eos_token
 
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE, quantization_config=bnb_config, device_map="auto"
-    )
-    model = prepare_model_for_kbit_training(model)
+    from dorado.config import make_bnb_config
+
+    bnb_config = make_bnb_config(exp_config)
+    load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
+    if bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+    model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+    if bnb_config is not None:
+        model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(
         r=exp_config["lora_r"],
@@ -51,7 +56,7 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
             f"Input: {ex.get('input', '')}\n"
             f"Response: {ex['output']}"
         )
-        return tokenizer(prompt, truncation=True, max_length=512)
+        return tokenizer(prompt, truncation=True, max_length=256)
 
     tokenized = dataset.map(tok_fn, remove_columns=dataset.column_names)
 

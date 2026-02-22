@@ -9,6 +9,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+import torch
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
 from dorado.utils import clear_gpu
@@ -40,12 +41,16 @@ def run_rm_training(
     tokenizer.pad_token = tokenizer.eos_token
 
     # ── model ────────────────────────────────────────────────────────
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        BASE, num_labels=2, quantization_config=bnb_config, device_map="auto"
-    )
+    from dorado.config import make_bnb_config
+
+    bnb_config = make_bnb_config(exp_config)
+    load_kwargs = dict(num_labels=2, device_map="auto", torch_dtype=torch.float16)
+    if bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+    model = AutoModelForSequenceClassification.from_pretrained(BASE, **load_kwargs)
     model.config.pad_token_id = tokenizer.pad_token_id
-    model = prepare_model_for_kbit_training(model)
+    if bnb_config is not None:
+        model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(
         r=exp_config["lora_r"],
@@ -59,7 +64,7 @@ def run_rm_training(
 
     def tok_fn(ex):
         return tokenizer(
-            ex["text"], truncation=True, padding="max_length", max_length=512
+            ex["text"], truncation=True, padding="max_length", max_length=256
         )
 
     tok_ds = ds.map(tok_fn, batched=True, remove_columns=["text"])

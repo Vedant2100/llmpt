@@ -17,6 +17,7 @@ from dorado.config import (
     build_experiment_grid,
     estimate_time,
     make_results_paths,
+    make_bnb_config,
 )
 from dorado.sft import run_sft_stage
 from dorado.generation import run_candidate_generation

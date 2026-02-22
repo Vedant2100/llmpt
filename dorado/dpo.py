@@ -4,6 +4,7 @@ import os
 
 import datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import torch
 from peft import LoraConfig, PeftModel
 from trl import DPOConfig, DPOTrainer
 
@@ -45,11 +46,15 @@ def run_dpo_training(
     )
 
     # ── load & merge SFT adapter into base ───────────────────────────
-    print("Loading base model + SFT adapter for DPO (8-bit)...")
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE, quantization_config=bnb_config, device_map="auto"
-    )
+    bits = exp_config.get("quantization_bits", 0)
+    print(f"Loading base model + SFT adapter for DPO ({bits}-bit if >0, else fp16)...")
+    from dorado.config import make_bnb_config
+
+    bnb_config = make_bnb_config(exp_config)
+    load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
+    if bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+    model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
 
     if os.path.exists(sft_model_path):
         print(

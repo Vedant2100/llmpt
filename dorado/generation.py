@@ -5,6 +5,7 @@ import os
 from datasets import load_dataset
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import torch
 from peft import PeftModel
 
 from dorado.utils import clear_gpu
@@ -26,10 +27,13 @@ def run_candidate_generation(
     QUESTIONS = [x["question"] for x in math_ds]
     GT = {x["question"]: x["answer"].split("#### ")[-1].strip() for x in math_ds}
 
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE, quantization_config=bnb_config, device_map="auto"
-    )
+    from dorado.config import make_bnb_config
+
+    bnb_config = make_bnb_config(exp_config)
+    load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
+    if bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+    model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
     if os.path.exists(generator_model_path):
         model = PeftModel.from_pretrained(model, generator_model_path)
     else:
