@@ -5,11 +5,7 @@ import random
 
 import torch
 from tqdm.auto import tqdm
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-)
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from peft import PeftModel
 
 from dorado.utils import clear_gpu, extract_answer_from_response, pipeline_warn

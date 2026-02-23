@@ -116,7 +116,10 @@ def run_single_experiment(exp_config: dict) -> dict:
 
             dpo_out = "dorado_final" if rnd == 0 else f"dorado_round_{r}"
             print(f"\n[Stage 5/6] DPO Training (Round {r})…")
-            run_dpo_training(exp_config, pairs, prev_path, dpo_out)
+            dpo_result = run_dpo_training(exp_config, pairs, prev_path, dpo_out)
+            if dpo_result is None:
+                print(f"❌ DPO round {r} produced no model. Stopping iterative loop.")
+                break
             prev_path = dpo_out
 
             round_metrics.append(

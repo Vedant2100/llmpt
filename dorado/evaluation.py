@@ -168,6 +168,11 @@ def evaluate_model(
         }
     except Exception as e:
         print(f"❌ Error evaluating {model_label}: {e}")
+        try:
+            del model
+            clear_gpu()
+        except NameError:
+            pass
         return None
 
 

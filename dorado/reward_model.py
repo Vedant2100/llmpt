@@ -44,7 +44,7 @@ def run_rm_training(
             f"Using same data for train and test."
         )
         full_ds = datasets.Dataset.from_list(data)
-        ds = {"train": full_ds, "test": full_ds}
+        ds = datasets.DatasetDict({"train": full_ds, "test": full_ds})
     else:
         ds = datasets.Dataset.from_list(data).train_test_split(test_size=0.2)
 
