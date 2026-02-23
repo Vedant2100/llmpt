@@ -20,8 +20,8 @@ DATASET_CONFIG = {
 }
 
 MODEL_CONFIG = {
-    "base_model": ["Qwen/Qwen2.5-0.5B"],
-    "rm_base_model": ["Qwen/Qwen2.5-0.5B"],
+    "base_model": ["Qwen/Qwen3-4B"],
+    "rm_base_model": ["Qwen/Qwen3-4B"],
 }
 
 ARCHITECTURE_CONFIG = {
@@ -56,9 +56,9 @@ TRAINING_CONFIG = {
     "sft_epochs": [2],
     "rm_epochs": [3],
     "dpo_epochs": [3],
-    "sft_batch_size": [4],
-    "rm_batch_size": [4],
-    "dpo_batch_size": [2],
+    "sft_batch_size": [2],
+    "rm_batch_size": [2],
+    "dpo_batch_size": [1],
 }
 
 GENERATION_CONFIG = {
@@ -68,7 +68,7 @@ GENERATION_CONFIG = {
 }
 
 EVAL_CONFIG = {
-    "eval_batch_size": [4],
+    "eval_batch_size": [2],
 }
 
 DUAL_PREFERENCE_CONFIG = {
