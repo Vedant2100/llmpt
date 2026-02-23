@@ -63,9 +63,14 @@ def make_model_load_kwargs(exp_config: dict, num_labels: int | None = None) -> d
         "device_map": "auto",
         "torch_dtype": torch.float16,
         "low_cpu_mem_usage": True,
+        "trust_remote_code": True,
     }
     if num_labels is not None:
         load_kwargs["num_labels"] = num_labels
+
+    hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        load_kwargs["token"] = hf_token
 
     bnb_config = make_bnb_config(exp_config)
     if bnb_config is not None:
