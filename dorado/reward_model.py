@@ -52,15 +52,12 @@ def run_rm_training(
     tokenizer.pad_token = tokenizer.eos_token
 
     # ── model ────────────────────────────────────────────────────────
-    from dorado.config import make_bnb_config
+    from dorado.config import make_model_load_kwargs
 
-    bnb_config = make_bnb_config(exp_config)
-    load_kwargs = dict(num_labels=2, device_map="auto", torch_dtype=torch.float16)
-    if bnb_config is not None:
-        load_kwargs["quantization_config"] = bnb_config
+    load_kwargs = make_model_load_kwargs(exp_config, num_labels=2)
     model = AutoModelForSequenceClassification.from_pretrained(BASE, **load_kwargs)
     model.config.pad_token_id = tokenizer.pad_token_id
-    if bnb_config is not None:
+    if "quantization_config" in load_kwargs:
         model = prepare_model_for_kbit_training(model)
 
     peft_config = LoraConfig(

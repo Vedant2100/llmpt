@@ -30,12 +30,9 @@ def run_candidate_generation(
         for x in math_ds
     }
 
-    from dorado.config import make_bnb_config
+    from dorado.config import make_model_load_kwargs
 
-    bnb_config = make_bnb_config(exp_config)
-    load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
-    if bnb_config is not None:
-        load_kwargs["quantization_config"] = bnb_config
+    load_kwargs = make_model_load_kwargs(exp_config)
     model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
     if os.path.exists(generator_model_path):
         model = PeftModel.from_pretrained(model, generator_model_path)

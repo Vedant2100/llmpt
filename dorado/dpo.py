@@ -61,12 +61,9 @@ def run_dpo_training(
     # ── load & merge SFT adapter into base ───────────────────────────
     bits = exp_config.get("quantization_bits", 0)
     print(f"Loading base model + SFT adapter for DPO ({bits}-bit if >0, else fp16)...")
-    from dorado.config import make_bnb_config
+    from dorado.config import make_model_load_kwargs
 
-    bnb_config = make_bnb_config(exp_config)
-    load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
-    if bnb_config is not None:
-        load_kwargs["quantization_config"] = bnb_config
+    load_kwargs = make_model_load_kwargs(exp_config)
     model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
 
     if os.path.exists(sft_model_path):

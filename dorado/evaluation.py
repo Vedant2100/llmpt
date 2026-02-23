@@ -64,13 +64,10 @@ def evaluate_model(
     is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
 
     try:
-        from dorado.config import make_bnb_config
+        from dorado.config import make_model_load_kwargs
 
-        bnb_config = make_bnb_config(exp_config)
         bits = exp_config.get("quantization_bits", 0)
-        load_kwargs = dict(device_map="auto", torch_dtype=torch.float16)
-        if bnb_config is not None:
-            load_kwargs["quantization_config"] = bnb_config
+        load_kwargs = make_model_load_kwargs(exp_config)
         label = f"{bits}-bit" if bits > 0 else "fp16"
         if is_adapter:
             print(f"Loading {model_label} as PEFT adapter ({label})...")

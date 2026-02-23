@@ -47,12 +47,9 @@ def run_labeling_stage(
     if use_rm and os.path.exists("reward_model"):
         print("Loading reward model for scoring...")
         BASE = exp_config["rm_base_model"]
-        from dorado.config import make_bnb_config
+        from dorado.config import make_model_load_kwargs
 
-        bnb_config = make_bnb_config(exp_config)
-        load_kwargs = dict(num_labels=2, device_map="auto", torch_dtype=torch.float16)
-        if bnb_config is not None:
-            load_kwargs["quantization_config"] = bnb_config
+        load_kwargs = make_model_load_kwargs(exp_config, num_labels=2)
         rm_model = AutoModelForSequenceClassification.from_pretrained(
             BASE, **load_kwargs
         )

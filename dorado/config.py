@@ -51,6 +51,38 @@ def make_bnb_config(exp_config: dict):
         return None  # no quantization — load in fp16/bf16 directly
 
 
+def make_model_load_kwargs(exp_config: dict, num_labels: int | None = None) -> dict:
+    """Build consistent HF model loading kwargs with optional multi-GPU sharding.
+
+    If multiple GPUs are visible via ``CUDA_VISIBLE_DEVICES``, adds a per-GPU
+    ``max_memory`` cap to encourage model sharding across devices.
+    """
+    import torch
+
+    load_kwargs = {
+        "device_map": "auto",
+        "torch_dtype": torch.float16,
+        "low_cpu_mem_usage": True,
+    }
+    if num_labels is not None:
+        load_kwargs["num_labels"] = num_labels
+
+    bnb_config = make_bnb_config(exp_config)
+    if bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+
+    visible = [
+        d.strip()
+        for d in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
+        if d.strip()
+    ]
+    if len(visible) > 1:
+        per_gpu_cap = os.environ.get("DORADO_MAX_MEMORY_PER_GPU", "10GiB")
+        load_kwargs["max_memory"] = {i: per_gpu_cap for i in range(len(visible))}
+
+    return load_kwargs
+
+
 TRAINING_CONFIG = {
     "iterative_dpo_rounds": [1],
     "sft_epochs": [2],

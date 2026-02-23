@@ -20,6 +20,7 @@ from dorado.config import (
     estimate_time,
     make_results_paths,
     make_bnb_config,
+    make_model_load_kwargs,
 )
 from dorado.sft import run_sft_stage
 from dorado.generation import run_candidate_generation
