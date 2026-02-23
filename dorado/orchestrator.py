@@ -9,7 +9,12 @@ import traceback
 import pandas as pd
 import torch
 
-from dorado.utils import clear_gpu, set_random_seeds, drain_pipeline_warnings
+from dorado.utils import (
+    clear_gpu,
+    set_random_seeds,
+    drain_pipeline_warnings,
+    enforce_storage_budget,
+)
 from dorado.sft import run_sft_stage
 from dorado.generation import run_candidate_generation
 from dorado.labeling import run_labeling_stage
@@ -70,6 +75,7 @@ def run_single_experiment(exp_config: dict) -> dict:
             print(f"⚠️ CUDA status check warning: {e}")
 
     set_random_seeds(exp_config.get("random_seed", 42))
+    enforce_storage_budget()
 
     results: dict = {"experiment_id": exp_id, "status": "in_progress", "error": None}
     # Drain any stale warnings from a previous run
@@ -78,6 +84,7 @@ def run_single_experiment(exp_config: dict) -> dict:
 
     try:
         # Stage 1: SFT
+        enforce_storage_budget()
         print("\n[Stage 1/6] Cold-Start SFT…")
         sft_path = run_sft_stage(exp_config)
 
@@ -91,9 +98,11 @@ def run_single_experiment(exp_config: dict) -> dict:
                 f"\n{'='*70}\nDPO ROUND {r}/{exp_config['iterative_dpo_rounds']}\n{'='*70}"
             )
 
+            enforce_storage_budget()
             print(f"\n[Stage 2/6] Candidate Generation (Round {r})…")
             samples, gt, _qs = run_candidate_generation(exp_config, prev_path)
 
+            enforce_storage_budget()
             print(f"\n[Stage 3/6] Initial Labeling (Round {r})…")
             init_pairs, init_labels, init_stats = run_labeling_stage(
                 exp_config, samples, gt, use_rm=False
@@ -102,6 +111,7 @@ def run_single_experiment(exp_config: dict) -> dict:
                 print(f"❌ No pairs in round {r}. Stopping.")
                 break
 
+            enforce_storage_budget()
             print(f"\n[Stage 4/6] Reward Model Training (Round {r})…")
             run_rm_training(exp_config, init_pairs, init_labels)
 
@@ -114,6 +124,7 @@ def run_single_experiment(exp_config: dict) -> dict:
                 print("   Using verifiable correctness pairs only")
                 pairs, labels, pair_stats = init_pairs, init_labels, init_stats
 
+            enforce_storage_budget()
             dpo_out = "dorado_final" if rnd == 0 else f"dorado_round_{r}"
             print(f"\n[Stage 5/6] DPO Training (Round {r})…")
             dpo_result = run_dpo_training(exp_config, pairs, prev_path, dpo_out)
@@ -133,6 +144,7 @@ def run_single_experiment(exp_config: dict) -> dict:
             )
 
         # Stage 6: Evaluation
+        enforce_storage_budget()
         print("\n[Stage 6/6] Final Evaluation…")
         model_paths = {
             "BASE": exp_config["base_model"],

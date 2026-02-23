@@ -7,6 +7,7 @@ import glob
 import shutil
 import random
 import subprocess
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -76,10 +77,22 @@ def cleanup_storage():
         stderr=subprocess.DEVNULL,
     )
 
-    hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
-    if os.path.exists(hf_cache):
-        shutil.rmtree(hf_cache, ignore_errors=True)
-        print("  ✓ Cleared HuggingFace cache")
+    hf_roots = {
+        os.path.expanduser("~/.cache/huggingface"),
+        os.environ.get("HF_HOME", ""),
+        os.environ.get("HF_HUB_CACHE", ""),
+        os.environ.get("HF_DATASETS_CACHE", ""),
+        os.environ.get("TRANSFORMERS_CACHE", ""),
+    }
+    for root in [p for p in hf_roots if p]:
+        if os.path.exists(root):
+            shutil.rmtree(root, ignore_errors=True)
+            print(f"  ✓ Cleared cache: {root}")
+
+    runtime_cache = os.environ.get("DORADO_RUNTIME_CACHE", "")
+    if runtime_cache and os.path.exists(runtime_cache):
+        shutil.rmtree(runtime_cache, ignore_errors=True)
+        print(f"  ✓ Cleared runtime cache: {runtime_cache}")
 
     artifacts = [
         "reward_model*",
@@ -102,3 +115,81 @@ def cleanup_storage():
         print("   ⚠️ Still low on space")
     else:
         print("   ✅ Sufficient space")
+
+
+def _path_size_gb(path: str) -> float:
+    """Return directory/file size in GiB (best effort)."""
+    p = Path(path)
+    if not p.exists():
+        return 0.0
+    if p.is_file():
+        return p.stat().st_size / 1024**3
+    total = 0
+    for child in p.rglob("*"):
+        try:
+            if child.is_file():
+                total += child.stat().st_size
+        except OSError:
+            continue
+    return total / 1024**3
+
+
+def enforce_storage_budget(
+    max_home_gb: float = 9.5,
+    min_free_gb: float = 2.0,
+    hard_fail: bool = True,
+):
+    """Keep storage usage below limits by pruning caches/artifacts proactively.
+
+    - ``max_home_gb``: soft cap for ``/home/jovyan`` usage.
+    - ``min_free_gb``: minimum free GiB required on filesystem.
+    """
+    home_dir = "/home/jovyan"
+    home_used = _path_size_gb(home_dir)
+    total, used, free = shutil.disk_usage("/")
+    free_gb = free / 1024**3
+
+    if home_used <= max_home_gb and free_gb >= min_free_gb:
+        return
+
+    print(
+        "🧯 Storage guard triggered: "
+        f"home_used={home_used:.2f}GiB (cap {max_home_gb:.2f}), "
+        f"free={free_gb:.2f}GiB (min {min_free_gb:.2f})"
+    )
+
+    # Step 1: remove run artifacts first
+    for pattern in (
+        "reward_model*",
+        "coldstart_dorado*",
+        "dorado_final*",
+        "dorado_round_*",
+    ):
+        for path in glob.glob(pattern):
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+
+    # Step 2: clear caches (home + redirected)
+    cleanup_storage()
+
+    # Re-check
+    home_used = _path_size_gb(home_dir)
+    _total2, _used2, free2 = shutil.disk_usage("/")
+    free_gb = free2 / 1024**3
+    ok = home_used <= max_home_gb and free_gb >= min_free_gb
+    if ok:
+        print(
+            f"✅ Storage guard satisfied: home_used={home_used:.2f}GiB, free={free_gb:.2f}GiB"
+        )
+        return
+
+    msg = (
+        "Storage budget still exceeded after cleanup: "
+        f"home_used={home_used:.2f}GiB (cap {max_home_gb:.2f}), "
+        f"free={free_gb:.2f}GiB (min {min_free_gb:.2f})."
+    )
+    if hard_fail:
+        raise RuntimeError(msg)
+    print(f"⚠️ {msg}")
