@@ -7,10 +7,10 @@ import pandas as pd
 import torch
 from datasets import load_dataset
 from tqdm.auto import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-from dorado.utils import clear_gpu, extract_answer_from_response
+from dorado.utils import clear_gpu, extract_answer_from_response, pipeline_warn
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ def evaluate_model(
     SFT_OUT = "coldstart_dorado"
 
     if not os.path.exists(model_path) and model_label != "BASE":
-        print(f"⚠️ Warning: {model_label} path '{model_path}' not found. Skipping...")
+        pipeline_warn(f"Eval: {model_label} path '{model_path}' not found. Skipping.")
         return None
 
     print(f"Evaluating {model_label}...")
@@ -92,11 +92,14 @@ def evaluate_model(
             tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.pad_token_id
 
+        MATH_PROMPT = "Solve this math problem step by step. Put your final numeric answer after ####.\n\nQuestion: {q}\n\nAnswer:"
+
         for batch_prompts in tqdm(
             list(_batched(prompts, exp_config["eval_batch_size"])),
             desc="Eval batches",
         ):
-            enc = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(
+            formatted = [MATH_PROMPT.format(q=p) for p in batch_prompts]
+            enc = tokenizer(formatted, return_tensors="pt", padding=True).to(
                 model.device
             )
             outs = model.generate(
@@ -130,6 +133,16 @@ def evaluate_model(
         avg_len = total_response_length / len(prompts)
         parsed_ratio = parsed_answer_count / len(prompts)
         ci_lo, ci_hi = bootstrap_confidence_interval(correct_flags)
+
+        if parsed_ratio < 0.5:
+            pipeline_warn(
+                f"Eval: {model_label} parsed ratio is {parsed_ratio:.0%} (<50%). "
+                f"Model may not be following the #### answer format."
+            )
+        if accuracy == 0.0:
+            pipeline_warn(
+                f"Eval: {model_label} has 0% accuracy. Model is not solving any problems."
+            )
 
         print(
             f"✨ {model_label} – Accuracy: {accuracy:.1%} "
@@ -185,6 +198,9 @@ def run_full_evaluation(
         if m:
             all_metrics[name] = m
             all_results.extend(m["results"])
+
+    if not all_metrics:
+        pipeline_warn("Eval: all models were skipped or failed. No metrics produced.")
 
     # ── summary table ────────────────────────────────────────────────
     if all_results:

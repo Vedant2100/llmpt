@@ -6,7 +6,6 @@ from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
@@ -56,7 +55,7 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
             f"Input: {ex.get('input', '')}\n"
             f"Response: {ex['output']}"
         )
-        return tokenizer(prompt, truncation=True, max_length=256)
+        return tokenizer(prompt, truncation=True, max_length=512)
 
     tokenized = dataset.map(tok_fn, remove_columns=dataset.column_names)
 

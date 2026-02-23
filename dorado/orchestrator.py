@@ -9,7 +9,7 @@ import traceback
 import pandas as pd
 import torch
 
-from dorado.utils import clear_gpu, set_random_seeds
+from dorado.utils import clear_gpu, set_random_seeds, drain_pipeline_warnings
 from dorado.sft import run_sft_stage
 from dorado.generation import run_candidate_generation
 from dorado.labeling import run_labeling_stage
@@ -72,6 +72,8 @@ def run_single_experiment(exp_config: dict) -> dict:
     set_random_seeds(exp_config.get("random_seed", 42))
 
     results: dict = {"experiment_id": exp_id, "status": "in_progress", "error": None}
+    # Drain any stale warnings from a previous run
+    drain_pipeline_warnings()
     start = time.time()
 
     try:
@@ -140,8 +142,9 @@ def run_single_experiment(exp_config: dict) -> dict:
                 if os.path.exists(rp):
                     model_paths[f"DORADO_R{ri}"] = rp
 
-        all_metrics, _all_results = run_full_evaluation(exp_config, model_paths)
+        all_metrics, all_eval_results = run_full_evaluation(exp_config, model_paths)
 
+        results["eval_examples"] = all_eval_results
         results["status"] = "success"
         results["runtime_minutes"] = (time.time() - start) / 60
         results["round_metrics"] = round_metrics
@@ -167,6 +170,17 @@ def run_single_experiment(exp_config: dict) -> dict:
             results["final_num_pairs"] = last["num_pairs"]
             results["final_avg_rm_score"] = last["avg_rm_score"]
 
+        # ── collect pipeline warnings ────────────────────────────────
+        warnings = drain_pipeline_warnings()
+        results["pipeline_warnings"] = warnings
+        results["warning_count"] = len(warnings)
+        if warnings:
+            print(f"\n{'─'*70}")
+            print(f"⚠️  PIPELINE WARNINGS ({len(warnings)}):")
+            for i, w in enumerate(warnings, 1):
+                print(f"  {i}. {w}")
+            print(f"{'─'*70}")
+
         print(
             f"\n✅ Experiment {exp_id} completed in {results['runtime_minutes']:.1f} min"
         )
@@ -175,6 +189,10 @@ def run_single_experiment(exp_config: dict) -> dict:
         results["status"] = "failed"
         results["error"] = str(e)
         results["runtime_minutes"] = (time.time() - start) / 60
+        # Still collect any warnings that fired before the crash
+        warnings = drain_pipeline_warnings()
+        results["pipeline_warnings"] = warnings
+        results["warning_count"] = len(warnings)
         print(f"\n❌ Experiment {exp_id} failed: {e}")
         traceback.print_exc()
 
@@ -195,6 +213,7 @@ def run_all_experiments(
     """
     completed_ids: set[int] = set()
     results_log: list[dict] = []
+    all_eval_examples: list[dict] = []
 
     if os.path.exists(checkpoint_file):
         print(f"Found checkpoint: {checkpoint_file}")
@@ -221,6 +240,13 @@ def run_all_experiments(
                 print(f"  {k}: {v}")
 
         res = run_single_experiment(cfg)
+        eval_examples = res.pop("eval_examples", [])
+        for ex in eval_examples:
+            ex["experiment_id"] = cfg["experiment_id"]
+        all_eval_examples.extend(eval_examples)
+        # Serialise warnings list for Excel (join as newline-separated string)
+        warnings_list = res.pop("pipeline_warnings", [])
+        res["pipeline_warnings"] = "\n".join(warnings_list) if warnings_list else ""
         results_log.append({**cfg, **res})
 
         print(f"\nCleaning up artifacts for experiment {eid}…")
@@ -262,7 +288,23 @@ def run_all_experiments(
     df = df[cols]
 
     try:
-        df.to_excel(results_file, index=False, engine="openpyxl")
+        with pd.ExcelWriter(results_file, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Results", index=False)
+            if all_eval_examples:
+                ex_df = pd.DataFrame(all_eval_examples)
+                ex_df["Prompt"] = ex_df["Prompt"].str[:200]
+                ex_df["Full Response"] = ex_df["Full Response"].str[:500]
+                ex_cols = [
+                    "experiment_id",
+                    "Model",
+                    "Prompt",
+                    "Correct Answer",
+                    "Model Answer",
+                    "Accurate",
+                    "Full Response",
+                ]
+                ex_df = ex_df[[c for c in ex_cols if c in ex_df.columns]]
+                ex_df.to_excel(writer, sheet_name="Examples", index=False)
         print(f"\n{'='*70}\nRESULTS EXPORTED → {results_file}\n{'='*70}")
         if os.path.exists(checkpoint_file):
             os.remove(checkpoint_file)

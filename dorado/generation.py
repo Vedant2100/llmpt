@@ -4,11 +4,11 @@ import os
 
 from datasets import load_dataset
 from tqdm.auto import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from peft import PeftModel
 
-from dorado.utils import clear_gpu
+from dorado.utils import clear_gpu, pipeline_warn
 
 
 def run_candidate_generation(
@@ -37,14 +37,19 @@ def run_candidate_generation(
     if os.path.exists(generator_model_path):
         model = PeftModel.from_pretrained(model, generator_model_path)
     else:
-        print(f"⚠️ Adapter not found at {generator_model_path}. Using base model.")
+        pipeline_warn(
+            f"Generation: adapter not found at '{generator_model_path}'. Using base model."
+        )
 
     tok = AutoTokenizer.from_pretrained(BASE)
     tok.pad_token = tok.eos_token
 
+    MATH_PROMPT = "Solve this math problem step by step. Put your final numeric answer after ####.\n\nQuestion: {q}\n\nAnswer:"
+
     ALL_SAMPLES: dict[str, list[str]] = {}
     for q in tqdm(QUESTIONS, desc="Generating Candidates"):
-        inputs = tok(q, return_tensors="pt").to(model.device)
+        prompt = MATH_PROMPT.format(q=q)
+        inputs = tok(prompt, return_tensors="pt").to(model.device)
         outs = model.generate(
             **inputs,
             max_new_tokens=exp_config["max_new_tokens_gen"],
@@ -58,6 +63,28 @@ def run_candidate_generation(
             tok.decode(o[inputs.input_ids.shape[-1] :], skip_special_tokens=True)
             for o in outs
         ]
+
+    # ── post-generation diagnostics ─────────────────────────────────
+    empty_count = 0
+    no_marker_count = 0
+    for q, responses in ALL_SAMPLES.items():
+        for r in responses:
+            if not r.strip():
+                empty_count += 1
+            if "####" not in r:
+                no_marker_count += 1
+    total_responses = len(ALL_SAMPLES) * exp_config["candidates_per_question"]
+    if empty_count > 0:
+        pipeline_warn(
+            f"Generation: {empty_count}/{total_responses} candidate responses "
+            f"are empty."
+        )
+    if no_marker_count > 0:
+        ratio = no_marker_count / max(total_responses, 1)
+        pipeline_warn(
+            f"Generation: {no_marker_count}/{total_responses} ({ratio:.0%}) "
+            f"candidates lack '####' answer marker."
+        )
 
     del model
     clear_gpu()

@@ -5,14 +5,13 @@ from tqdm.auto import tqdm
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
-    BitsAndBytesConfig,
     Trainer,
     TrainingArguments,
 )
 import torch
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
-from dorado.utils import clear_gpu
+from dorado.utils import clear_gpu, pipeline_warn
 
 
 def run_rm_training(
@@ -27,6 +26,10 @@ def run_rm_training(
     """
     BASE = exp_config["rm_base_model"]
 
+    if not pairs:
+        pipeline_warn("Reward model: received zero pairs. Skipping RM training.")
+        return output_dir
+
     # ── build dataset ────────────────────────────────────────────────
     data = []
     for (q, good, bad), _lab in tqdm(
@@ -35,7 +38,15 @@ def run_rm_training(
         data.append({"text": q + " [ANS] " + good, "label": 1})
         data.append({"text": q + " [ANS] " + bad, "label": 0})
 
-    ds = datasets.Dataset.from_list(data).train_test_split(test_size=0.2)
+    if len(data) < 6:
+        pipeline_warn(
+            f"Reward model: only {len(data)} samples (<6). "
+            f"Using same data for train and test."
+        )
+        full_ds = datasets.Dataset.from_list(data)
+        ds = {"train": full_ds, "test": full_ds}
+    else:
+        ds = datasets.Dataset.from_list(data).train_test_split(test_size=0.2)
 
     tokenizer = AutoTokenizer.from_pretrained(BASE)
     tokenizer.pad_token = tokenizer.eos_token

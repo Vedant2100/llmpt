@@ -3,12 +3,12 @@
 import os
 
 import datasets
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from peft import LoraConfig, PeftModel
 from trl import DPOConfig, DPOTrainer
 
-from dorado.utils import clear_gpu
+from dorado.utils import clear_gpu, pipeline_warn
 
 
 def run_dpo_training(
@@ -23,11 +23,17 @@ def run_dpo_training(
     """
     BASE = exp_config["base_model"]
 
+    total_pairs = len(pairs)
     dpo_list = [
         {"prompt": q, "chosen": c, "rejected": r} for q, c, r in pairs if c and r
     ]
+    filtered_out = total_pairs - len(dpo_list)
+    if filtered_out > 0:
+        pipeline_warn(
+            f"DPO: {filtered_out}/{total_pairs} pairs dropped (empty chosen/rejected)."
+        )
     if not dpo_list:
-        print("❌ Error: No DPO pairs found!")
+        pipeline_warn("DPO: zero valid pairs after filtering. Skipping DPO training.")
         return None
 
     dpo_ds = datasets.Dataset.from_list(dpo_list)
@@ -58,12 +64,14 @@ def run_dpo_training(
 
     if os.path.exists(sft_model_path):
         print(
-            "⚠️ Loading SFT adapter – will dequantize during merge (required for DPO)..."
+            "Loading SFT adapter – will dequantize during merge (required for DPO)..."
         )
         model = PeftModel.from_pretrained(model, sft_model_path)
         model = model.merge_and_unload()
     else:
-        print(f"⚠️ SFT adapter not found at {sft_model_path}. Using base model.")
+        pipeline_warn(
+            f"DPO: SFT adapter not found at '{sft_model_path}'. Using base model."
+        )
 
     tok = AutoTokenizer.from_pretrained(BASE)
     tok.pad_token = tok.eos_token

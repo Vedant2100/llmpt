@@ -10,12 +10,12 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # ── Parameter dictionaries (edit these lists to sweep) ───────────────
 DATASET_CONFIG = {
-    "sft_samples": [20],
-    "dpo_pairs": [3],
+    "sft_samples": [500],
+    "dpo_pairs": [50],
     "candidates_per_question": [4],
     "sft_dataset_name": ["tatsu-lab/alpaca"],
     "eval_split": ["test"],
-    "eval_max_samples": [20],
+    "eval_max_samples": [200],
     "random_seed": [42],
 }
 
@@ -25,8 +25,8 @@ MODEL_CONFIG = {
 }
 
 ARCHITECTURE_CONFIG = {
-    "lora_r": [4],
-    "lora_alpha": [8],
+    "lora_r": [8],
+    "lora_alpha": [16],
     "dpo_beta": [0.1],
     "gradient_accumulation_steps": [4],
     "quantization_bits": [0],  # 0 = no quantization (fp16), 4 = NF4, 8 = int8
@@ -53,22 +53,22 @@ def make_bnb_config(exp_config: dict):
 
 TRAINING_CONFIG = {
     "iterative_dpo_rounds": [1],
-    "sft_epochs": [1],
-    "rm_epochs": [1],
-    "dpo_epochs": [1],
-    "sft_batch_size": [1],
-    "rm_batch_size": [1],
-    "dpo_batch_size": [1],
+    "sft_epochs": [2],
+    "rm_epochs": [3],
+    "dpo_epochs": [3],
+    "sft_batch_size": [4],
+    "rm_batch_size": [4],
+    "dpo_batch_size": [2],
 }
 
 GENERATION_CONFIG = {
     "temperature": [0.7],
-    "max_new_tokens_gen": [64],
-    "max_new_tokens_eval": [128],
+    "max_new_tokens_gen": [256],
+    "max_new_tokens_eval": [400],
 }
 
 EVAL_CONFIG = {
-    "eval_batch_size": [1],
+    "eval_batch_size": [4],
 }
 
 DUAL_PREFERENCE_CONFIG = {

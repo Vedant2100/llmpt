@@ -43,27 +43,49 @@ def extract_answer_from_response(text: str) -> str:
     """
     if "####" in text:
         text = text.split("####")[-1].strip()
-    nums = re.findall(r'\d+', text)
+    nums = re.findall(r"\d+", text)
     return nums[-1] if nums else "None"
+
+
+# ── pipeline warning accumulator ─────────────────────────────────────
+
+_pipeline_warnings: list[str] = []
+
+
+def pipeline_warn(msg: str):
+    """Record a pipeline warning and print it immediately."""
+    _pipeline_warnings.append(msg)
+    print(f"⚠️  [WARNING] {msg}")
+
+
+def drain_pipeline_warnings() -> list[str]:
+    """Return all accumulated warnings and clear the buffer."""
+    w = _pipeline_warnings.copy()
+    _pipeline_warnings.clear()
+    return w
 
 
 def cleanup_storage():
     """Aggressive cleanup to free disk space (pip cache, HF cache, artifacts)."""
-    print('🧹 Purging caches & training artifacts...')
+    print("🧹 Purging caches & training artifacts...")
 
     subprocess.run(
-        ['pip', 'cache', 'purge'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ["pip", "cache", "purge"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-    hf_cache = os.path.expanduser('~/.cache/huggingface/hub')
+    hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
     if os.path.exists(hf_cache):
         shutil.rmtree(hf_cache, ignore_errors=True)
-        print('  ✓ Cleared HuggingFace cache')
+        print("  ✓ Cleared HuggingFace cache")
 
     artifacts = [
-        'reward_model*', 'coldstart_dorado*',
-        'dorado_final*', 'dorado_round_*', 'runs/',
+        "reward_model*",
+        "coldstart_dorado*",
+        "dorado_final*",
+        "dorado_round_*",
+        "runs/",
     ]
     for pattern in artifacts:
         for path in glob.glob(pattern):
@@ -71,11 +93,11 @@ def cleanup_storage():
                 shutil.rmtree(path, ignore_errors=True)
             else:
                 os.remove(path)
-    print('  ✓ Removed training artifacts')
+    print("  ✓ Removed training artifacts")
 
-    total, used, free = shutil.disk_usage('/')
-    print(f'\n📊 Disk: {used/total:.1%} used  ({free/1024**3:.2f} GB free)')
+    total, used, free = shutil.disk_usage("/")
+    print(f"\n📊 Disk: {used/total:.1%} used  ({free/1024**3:.2f} GB free)")
     if free / 1024**3 < 2:
-        print('   ⚠️ Still low on space')
+        print("   ⚠️ Still low on space")
     else:
-        print('   ✅ Sufficient space')
+        print("   ✅ Sufficient space")
