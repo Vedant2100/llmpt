@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ── Memory optimisation ──────────────────────────────────────────────
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # GPU 0 is full; use GPU 1 instead
+# NOTE: CUDA_VISIBLE_DEVICES must be set in the notebook BEFORE torch import
 
 # ── Parameter dictionaries (edit these lists to sweep) ───────────────
 DATASET_CONFIG = {
