@@ -25,7 +25,10 @@ def run_candidate_generation(
         "openai/gsm8k", "main", split=f"train[:{exp_config['dpo_pairs']}]"
     )
     QUESTIONS = [x["question"] for x in math_ds]
-    GT = {x["question"]: x["answer"].split("#### ")[-1].strip() for x in math_ds}
+    GT = {
+        x["question"]: x["answer"].split("#### ")[-1].strip().replace(",", "")
+        for x in math_ds
+    }
 
     from dorado.config import make_bnb_config
 

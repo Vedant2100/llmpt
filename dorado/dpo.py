@@ -23,9 +23,16 @@ def run_dpo_training(
     """
     BASE = exp_config["base_model"]
 
+    MATH_PROMPT = (
+        "Solve this math problem step by step. Put your final numeric answer "
+        "after ####.\n\nQuestion: {q}\n\nAnswer:"
+    )
+
     total_pairs = len(pairs)
     dpo_list = [
-        {"prompt": q, "chosen": c, "rejected": r} for q, c, r in pairs if c and r
+        {"prompt": MATH_PROMPT.format(q=q), "chosen": c, "rejected": r}
+        for q, c, r in pairs
+        if c and r
     ]
     filtered_out = total_pairs - len(dpo_list)
     if filtered_out > 0:

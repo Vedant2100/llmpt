@@ -43,6 +43,7 @@ def extract_answer_from_response(text: str) -> str:
     """
     if "####" in text:
         text = text.split("####")[-1].strip()
+    text = text.replace(",", "")  # normalise "1,200" → "1200"
     nums = re.findall(r"\d+", text)
     return nums[-1] if nums else "None"
 

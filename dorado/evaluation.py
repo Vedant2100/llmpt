@@ -193,7 +193,10 @@ def run_full_evaluation(
         eval_ds = eval_ds.select(range(min(max_n, len(eval_ds))))
 
     questions = [x["question"] for x in eval_ds]
-    gt = {x["question"]: x["answer"].split("#### ")[-1].strip() for x in eval_ds}
+    gt = {
+        x["question"]: x["answer"].split("#### ")[-1].strip().replace(",", "")
+        for x in eval_ds
+    }
 
     all_metrics: dict[str, dict] = {}
     all_results: list[dict] = []
