@@ -41,7 +41,7 @@ def run_dpo_training(
         logging_steps=5,
         report_to="none",
         save_strategy="no",
-        fp16=True,
+        bf16=True,
         remove_unused_columns=False,
     )
 

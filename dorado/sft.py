@@ -69,7 +69,7 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
         save_strategy="no",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        fp16=True,
+        bf16=True,
         report_to="none",
     )
 

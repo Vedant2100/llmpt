@@ -78,7 +78,7 @@ def run_rm_training(
             per_device_train_batch_size=exp_config["rm_batch_size"],
             num_train_epochs=exp_config["rm_epochs"],
             logging_steps=10,
-            fp16=True,
+            bf16=True,
             report_to="none",
         ),
         train_dataset=tok_ds["train"],
