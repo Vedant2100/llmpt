@@ -120,7 +120,9 @@ def run_single_experiment(exp_config: dict) -> dict:
                     exp_config, samples, gt, use_rm=True
                 )
             else:
-                print("\n[Stage 4/6] Skipped Reward Model Training (use_rm_scoring=False)")
+                print(
+                    "\n[Stage 4/6] Skipped Reward Model Training (use_rm_scoring=False)"
+                )
                 print("   Using verifiable correctness pairs only")
                 pairs, labels, pair_stats = init_pairs, init_labels, init_stats
 
