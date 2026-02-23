@@ -8,7 +8,7 @@ import torch
 from peft import LoraConfig, PeftModel
 from trl import DPOConfig, DPOTrainer
 
-from dorado.utils import clear_gpu, pipeline_warn
+from dorado.utils import clear_gpu, pipeline_warn, get_mixed_precision_kwargs
 
 
 def run_dpo_training(
@@ -59,7 +59,7 @@ def run_dpo_training(
         gradient_checkpointing_kwargs={"use_reentrant": False},
         max_prompt_length=256,
         max_length=512,
-        bf16=True,
+        **get_mixed_precision_kwargs(),
         remove_unused_columns=False,
     )
 

@@ -111,16 +111,16 @@ def run_single_experiment(exp_config: dict) -> dict:
                 print(f"❌ No pairs in round {r}. Stopping.")
                 break
 
-            enforce_storage_budget()
-            print(f"\n[Stage 4/6] Reward Model Training (Round {r})…")
-            run_rm_training(exp_config, init_pairs, init_labels)
-
             if exp_config["use_rm_scoring"]:
+                enforce_storage_budget()
+                print(f"\n[Stage 4/6] Reward Model Training (Round {r})…")
+                run_rm_training(exp_config, init_pairs, init_labels)
                 print(f"\n[Stage 3b/6] Re-labeling with RM (Round {r})…")
                 pairs, labels, pair_stats = run_labeling_stage(
                     exp_config, samples, gt, use_rm=True
                 )
             else:
+                print("\n[Stage 4/6] Skipped Reward Model Training (use_rm_scoring=False)")
                 print("   Using verifiable correctness pairs only")
                 pairs, labels, pair_stats = init_pairs, init_labels, init_stats
 

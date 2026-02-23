@@ -13,7 +13,7 @@ from transformers import (
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-from dorado.utils import clear_gpu
+from dorado.utils import clear_gpu, get_mixed_precision_kwargs
 
 
 def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str:
@@ -65,7 +65,7 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
         save_strategy="no",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        bf16=True,
+        **get_mixed_precision_kwargs(),
         report_to="none",
     )
 

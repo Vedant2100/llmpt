@@ -11,7 +11,7 @@ from transformers import (
 import torch
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
-from dorado.utils import clear_gpu, pipeline_warn
+from dorado.utils import clear_gpu, pipeline_warn, get_mixed_precision_kwargs
 
 
 def run_rm_training(
@@ -86,7 +86,7 @@ def run_rm_training(
             per_device_train_batch_size=exp_config["rm_batch_size"],
             num_train_epochs=exp_config["rm_epochs"],
             logging_steps=10,
-            bf16=True,
+            **get_mixed_precision_kwargs(),
             report_to="none",
         ),
         train_dataset=tok_ds["train"],

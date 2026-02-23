@@ -13,6 +13,15 @@ import torch
 import numpy as np
 
 
+def get_mixed_precision_kwargs() -> dict:
+    """Return safe mixed-precision flags for HF Trainer configs."""
+    if not torch.cuda.is_available():
+        return {"bf16": False, "fp16": False}
+    if torch.cuda.is_bf16_supported():
+        return {"bf16": True, "fp16": False}
+    return {"bf16": False, "fp16": True}
+
+
 def clear_gpu():
     """Clear GPU memory, resilient to corrupted CUDA context."""
     gc.collect()
