@@ -54,6 +54,11 @@ def run_dpo_training(
         logging_steps=5,
         report_to="none",
         save_strategy="no",
+        optim="paged_adamw_8bit",
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        max_prompt_length=256,
+        max_length=512,
         bf16=True,
         remove_unused_columns=False,
     )

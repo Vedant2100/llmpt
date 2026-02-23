@@ -233,7 +233,12 @@ def run_all_experiments(
     if os.path.exists(checkpoint_file):
         print(f"Found checkpoint: {checkpoint_file}")
         cp = pd.read_excel(checkpoint_file)
-        completed_ids = set(cp["experiment_id"].tolist())
+        if "status" in cp.columns:
+            completed_ids = set(
+                cp.loc[cp["status"] == "success", "experiment_id"].tolist()
+            )
+        else:
+            completed_ids = set(cp["experiment_id"].tolist())
         results_log = cp.to_dict("records")
         print(f"Resuming – {len(completed_ids)} experiments already done.")
     else:
