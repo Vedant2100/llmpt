@@ -20,8 +20,8 @@ DATASET_CONFIG = {
 }
 
 MODEL_CONFIG = {
-    "base_model": ["Qwen/Qwen3-4B"],
-    "rm_base_model": ["Qwen/Qwen3-4B"],
+    "base_model": ["Qwen/Qwen2.5-1.5B-Instruct"],
+    "rm_base_model": ["Qwen/Qwen2.5-1.5B-Instruct"],
 }
 
 ARCHITECTURE_CONFIG = {
@@ -29,7 +29,7 @@ ARCHITECTURE_CONFIG = {
     "lora_alpha": [16],
     "dpo_beta": [0.1],
     "gradient_accumulation_steps": [4],
-    "quantization_bits": [0],  # 0 = no quantization (fp16), 4 = NF4, 8 = int8
+    "quantization_bits": [4],  # fair A/B: fp16 vs 4-bit
 }
 
 
