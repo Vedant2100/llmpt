@@ -37,6 +37,28 @@ def bootstrap_confidence_interval(
     )
 
 
+def mcnemar_exact_pvalue(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value from discordant counts.
+
+    Uses SciPy's binomtest when available and falls back to a pure-Python
+    binomial tail computation when needed.
+    """
+    n = b + c
+    if n == 0:
+        return 1.0
+
+    k = min(b, c)
+    try:
+        from scipy.stats import binomtest
+
+        return float(binomtest(k, n=n, p=0.5, alternative="two-sided").pvalue)
+    except Exception:
+        from math import comb
+
+        cdf = sum(comb(n, i) for i in range(0, k + 1)) / (2**n)
+        return float(min(1.0, 2.0 * cdf))
+
+
 # ── single-model evaluation ─────────────────────────────────────────
 
 
@@ -233,19 +255,16 @@ def run_full_evaluation(
         if "DORADO" in all_metrics and "SFT" in all_metrics:
             d = np.array(all_metrics["DORADO"]["correct_flags"])
             s = np.array(all_metrics["SFT"]["correct_flags"])
-            from scipy.stats import mcnemar
-
-            table = [
-                [int(np.sum(d & s)), int(np.sum(~d & s))],
-                [int(np.sum(d & ~s)), int(np.sum(~d & ~s))],
-            ]
-            res = mcnemar(table, exact=True)
+            b = int(np.sum(~d & s))
+            c = int(np.sum(d & ~s))
+            p_value = mcnemar_exact_pvalue(b, c)
             diff = all_metrics["DORADO"]["accuracy"] - all_metrics["SFT"]["accuracy"]
             print("\n--- STATISTICAL SIGNIFICANCE TEST ---")
             print(f"McNemar's Test (DORADO vs SFT):")
             print(f"  Improvement: {diff:.1%}")
-            print(f"  p-value: {res.pvalue:.4f}")
-            sig = "✅ Significant" if res.pvalue < 0.05 else "⚠️ NOT significant"
+            print(f"  Discordant pairs: b={b}, c={c}")
+            print(f"  p-value: {p_value:.4f}")
+            sig = "✅ Significant" if p_value < 0.05 else "⚠️ NOT significant"
             print(f"  {sig} at α=0.05")
 
     return all_metrics, all_results
