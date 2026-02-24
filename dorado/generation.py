@@ -8,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from peft import PeftModel
 
-from dorado.utils import clear_gpu, pipeline_warn
+from dorado.utils import clear_gpu, pipeline_warn, extract_answer_from_ground_truth
 
 
 def run_candidate_generation(
@@ -26,7 +26,7 @@ def run_candidate_generation(
     )
     QUESTIONS = [x["question"] for x in math_ds]
     GT = {
-        x["question"]: x["answer"].split("#### ")[-1].strip().replace(",", "")
+        x["question"]: extract_answer_from_ground_truth(x["answer"])
         for x in math_ds
     }
 

@@ -86,6 +86,9 @@ def run_dpo_training(
     )
 
     # ── load & merge SFT adapter into base ───────────────────────────
+    # Contract: DPO is trained as a single adapter on top of a merged
+    # (base + SFT) model snapshot. Evaluation should therefore load the
+    # resulting DORADO adapter directly on BASE, without re-stacking SFT.
     bits = exp_config.get("quantization_bits", 0)
     print(f"Loading base model + SFT adapter for DPO ({bits}-bit if >0, else fp16)...")
     from dorado.config import make_model_load_kwargs

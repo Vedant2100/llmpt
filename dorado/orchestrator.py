@@ -161,6 +161,11 @@ def run_single_experiment(exp_config: dict) -> dict:
                     "num_pairs": pair_stats["num_pairs"],
                     "correct_incorrect_pairs": pair_stats["correct_incorrect_pairs"],
                     "correct_correct_pairs": pair_stats["correct_correct_pairs"],
+                    "all_wrong_dropped_questions": pair_stats.get(
+                        "all_wrong_dropped_questions", 0
+                    ),
+                    "all_correct_questions": pair_stats.get("all_correct_questions", 0),
+                    "mixed_questions": pair_stats.get("mixed_questions", 0),
                     "avg_rm_score": pair_stats["avg_rm_score"],
                 }
             )
@@ -209,6 +214,7 @@ def run_single_experiment(exp_config: dict) -> dict:
 
         # ── collect pipeline warnings ────────────────────────────────
         warnings = drain_pipeline_warnings()
+        warnings = list(dict.fromkeys(warnings))
         results["pipeline_warnings"] = warnings
         results["warning_count"] = len(warnings)
         if warnings:
@@ -228,6 +234,7 @@ def run_single_experiment(exp_config: dict) -> dict:
         results["runtime_minutes"] = (time.time() - start) / 60
         # Still collect any warnings that fired before the crash
         warnings = drain_pipeline_warnings()
+        warnings = list(dict.fromkeys(warnings))
         results["pipeline_warnings"] = warnings
         results["warning_count"] = len(warnings)
         print(f"\n❌ Experiment {exp_id} failed: {e}")

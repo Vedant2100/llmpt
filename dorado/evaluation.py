@@ -10,7 +10,12 @@ from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-from dorado.utils import clear_gpu, extract_answer_from_response, pipeline_warn
+from dorado.utils import (
+    clear_gpu,
+    extract_answer_from_response,
+    extract_answer_from_ground_truth,
+    pipeline_warn,
+)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -71,7 +76,6 @@ def evaluate_model(
 ) -> dict | None:
     """Evaluate one model; return metrics dict or *None* on skip/error."""
     BASE = exp_config["base_model"]
-    SFT_OUT = "coldstart_dorado"
 
     if not os.path.exists(model_path) and model_label != "BASE":
         pipeline_warn(f"Eval: {model_label} path '{model_path}' not found. Skipping.")
@@ -82,6 +86,8 @@ def evaluate_model(
     correct_flags: list[bool] = []
     total_response_length = 0
     parsed_answer_count = 0
+    marker_compliance_count = 0
+    unique_answers: set[str] = set()
 
     is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
 
@@ -94,15 +100,7 @@ def evaluate_model(
         if is_adapter:
             print(f"Loading {model_label} as PEFT adapter ({label})...")
             model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
-            is_dorado_variant = model_label.startswith("DORADO")
-            if is_dorado_variant:
-                if os.path.exists(SFT_OUT):
-                    print("  Stacking SFT adapter...")
-                    model = PeftModel.from_pretrained(model, SFT_OUT)
-                print(f"  Stacking {model_label} adapter...")
-                model = PeftModel.from_pretrained(model, model_path)
-            else:
-                model = PeftModel.from_pretrained(model, model_path)
+            model = PeftModel.from_pretrained(model, model_path)
         else:
             print(f"Loading {model_label} as full model ({label})...")
             model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
@@ -136,6 +134,9 @@ def evaluate_model(
                 correct_flags.append(ok)
                 if predicted != "None":
                     parsed_answer_count += 1
+                    unique_answers.add(predicted)
+                if "####" in resp:
+                    marker_compliance_count += 1
                 total_response_length += len(resp.split())
 
                 results.append(
@@ -152,6 +153,8 @@ def evaluate_model(
         accuracy = float(np.mean(correct_flags))
         avg_len = total_response_length / len(prompts)
         parsed_ratio = parsed_answer_count / len(prompts)
+        marker_ratio = marker_compliance_count / len(prompts)
+        answer_diversity_ratio = len(unique_answers) / len(prompts)
         ci_lo, ci_hi = bootstrap_confidence_interval(correct_flags)
 
         if parsed_ratio < 0.5:
@@ -168,7 +171,10 @@ def evaluate_model(
             f"✨ {model_label} – Accuracy: {accuracy:.1%} "
             f"(95% CI: [{ci_lo:.1%}, {ci_hi:.1%}])"
         )
-        print(f"   Avg Length: {avg_len:.1f} words, Parsed: {parsed_ratio:.1%}")
+        print(
+            f"   Avg Length: {avg_len:.1f} words, Parsed: {parsed_ratio:.1%}, "
+            f"Marker: {marker_ratio:.1%}, Diversity: {answer_diversity_ratio:.1%}"
+        )
 
         del model
         clear_gpu()
@@ -183,6 +189,8 @@ def evaluate_model(
             "total_count": len(prompts),
             "avg_response_length": avg_len,
             "parsed_answer_ratio": parsed_ratio,
+            "marker_compliance_ratio": marker_ratio,
+            "answer_diversity_ratio": answer_diversity_ratio,
             "correct_flags": correct_flags,
             "results": results,
         }
@@ -214,7 +222,7 @@ def run_full_evaluation(
 
     questions = [x["question"] for x in eval_ds]
     gt = {
-        x["question"]: x["answer"].split("#### ")[-1].strip().replace(",", "")
+        x["question"]: extract_answer_from_ground_truth(x["answer"])
         for x in eval_ds
     }
 
@@ -240,6 +248,9 @@ def run_full_evaluation(
                 "95% CI Lower": m["ci_lower"] * 100,
                 "95% CI Upper": m["ci_upper"] * 100,
                 "CI Width": m["ci_width"] * 100,
+                "Parsed %": m["parsed_answer_ratio"] * 100,
+                "Marker %": m["marker_compliance_ratio"] * 100,
+                "Diversity %": m["answer_diversity_ratio"] * 100,
                 "n": m["total_count"],
             }
             for m in all_metrics.values()

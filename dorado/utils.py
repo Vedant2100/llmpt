@@ -53,9 +53,46 @@ def extract_answer_from_response(text: str) -> str:
     """
     if "####" in text:
         text = text.split("####")[-1].strip()
-    text = text.replace(",", "")  # normalise "1,200" → "1200"
-    nums = re.findall(r"\d+", text)
-    return nums[-1] if nums else "None"
+    text = text.replace(",", "")
+    nums = re.findall(r"-?\d+(?:/\d+|\.\d+)?", text)
+    if not nums:
+        return "None"
+    return _canonicalize_numeric_token(nums[-1])
+
+
+def extract_answer_from_ground_truth(text: str) -> str:
+    """Extract canonical numeric answer from dataset ground-truth text."""
+    text = text.replace(",", "")
+    if "####" in text:
+        text = text.split("####")[-1].strip()
+    nums = re.findall(r"-?\d+(?:/\d+|\.\d+)?", text)
+    if not nums:
+        return "None"
+    return _canonicalize_numeric_token(nums[-1])
+
+
+def _canonicalize_numeric_token(token: str) -> str:
+    """Normalize integer/decimal/fraction tokens to a stable comparable string."""
+    token = token.strip()
+    if "/" in token:
+        try:
+            from fractions import Fraction
+
+            value = float(Fraction(token))
+            if abs(value - round(value)) < 1e-9:
+                return str(int(round(value)))
+            out = f"{value:.12f}".rstrip("0").rstrip(".")
+            return out if out else "0"
+        except Exception:
+            return token
+    try:
+        value = float(token)
+    except ValueError:
+        return token
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    out = f"{value:.12f}".rstrip("0").rstrip(".")
+    return out if out else "0"
 
 
 # ── pipeline warning accumulator ─────────────────────────────────────
