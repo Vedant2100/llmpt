@@ -94,7 +94,8 @@ def evaluate_model(
         if is_adapter:
             print(f"Loading {model_label} as PEFT adapter ({label})...")
             model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
-            if model_label == "DORADO" or "dorado" in model_path.lower():
+            is_dorado_variant = model_label.startswith("DORADO")
+            if is_dorado_variant:
                 if os.path.exists(SFT_OUT):
                     print("  Stacking SFT adapter...")
                     model = PeftModel.from_pretrained(model, SFT_OUT)

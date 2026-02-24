@@ -43,7 +43,30 @@ def run_dpo_training(
         pipeline_warn("DPO: zero valid pairs after filtering. Skipping DPO training.")
         return None
 
-    dpo_ds = datasets.Dataset.from_list(dpo_list)
+    tok = AutoTokenizer.from_pretrained(BASE)
+    tok.pad_token = tok.eos_token
+
+    prompt_max_tokens = 256
+    filtered_dpo_list = []
+    overlong_count = 0
+    for row in dpo_list:
+        prompt_len = len(tok(row["prompt"], add_special_tokens=False)["input_ids"])
+        if prompt_len <= prompt_max_tokens:
+            filtered_dpo_list.append(row)
+        else:
+            overlong_count += 1
+
+    if overlong_count > 0:
+        pipeline_warn(
+            f"DPO: {overlong_count}/{len(dpo_list)} pairs dropped (prompt too long > {prompt_max_tokens} tokens)."
+        )
+    if not filtered_dpo_list:
+        pipeline_warn(
+            "DPO: zero valid pairs after prompt-length filtering. Skipping DPO training."
+        )
+        return None
+
+    dpo_ds = datasets.Dataset.from_list(filtered_dpo_list)
 
     dpo_args = DPOConfig(
         output_dir=output_path,
@@ -57,7 +80,6 @@ def run_dpo_training(
         optim="paged_adamw_8bit",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        max_prompt_length=256,
         max_length=512,
         **get_mixed_precision_kwargs(),
         remove_unused_columns=False,
@@ -82,8 +104,6 @@ def run_dpo_training(
             f"DPO: SFT adapter not found at '{sft_model_path}'. Using base model."
         )
 
-    tok = AutoTokenizer.from_pretrained(BASE)
-    tok.pad_token = tok.eos_token
     model.config.pad_token_id = tok.pad_token_id
 
     peft_config = LoraConfig(
