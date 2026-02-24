@@ -1,0 +1,56 @@
+🚀 Starting full Dorado run
+Results file: results/2026-02-24/dorado_results.xlsx
+Checkpoint file: results/2026-02-24/dorado_checkpoint.xlsx
+Experiments: 2
+No checkpoint found. Starting fresh.
+
+🧹 Pre-run cleanup: removing intermediate artifacts (results folder preserved)…
+🧹 Cleanup removed 1 intermediate artifact(s): coldstart_dorado
+
+======================================================================
+RUNNING 2 EXPERIMENTS
+======================================================================
+
+
+======================================================================
+EXPERIMENT 1/2 (ID: 0)
+======================================================================
+  sft_samples: 500
+  dpo_pairs: 50
+  candidates_per_question: 4
+  sft_dataset_name: tatsu-lab/alpaca
+  eval_split: test
+  eval_max_samples: 200
+  random_seed: 42
+  base_model: Qwen/Qwen2.5-1.5B-Instruct
+  rm_base_model: Qwen/Qwen2.5-1.5B-Instruct
+  lora_r: 8
+  lora_alpha: 16
+  dpo_beta: 0.1
+  gradient_accumulation_steps: 4
+  quantization_bits: 4
+  iterative_dpo_rounds: 1
+  sft_epochs: 2
+  rm_epochs: 3
+  dpo_epochs: 3
+  sft_batch_size: 2
+  rm_batch_size: 2
+  dpo_batch_size: 1
+  temperature: 0.7
+  max_new_tokens_gen: 256
+  max_new_tokens_eval: 400
+  eval_batch_size: 2
+  use_rm_scoring: False
+  rm_weight: 0.5
+  correctness_weight: 1.0
+
+======================================================================
+EXPERIMENT 0
+======================================================================
+🧹 Clearing intermediate artifacts before experiment run…
+🧹 Cleanup found no intermediate artifacts to remove
+
+🎮 GPU Memory: 0.00 GB allocated, 0.00 GB reserved
+🎲 Random seeds set to 42
+
+[Stage 1/6] Cold-Start SFT…

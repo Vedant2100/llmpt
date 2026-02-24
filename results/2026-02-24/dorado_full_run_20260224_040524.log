@@ -1,0 +1,97 @@
+🚀 Starting full Dorado run
+Results file: results/2026-02-24/dorado_results.xlsx
+Checkpoint file: results/2026-02-24/dorado_checkpoint.xlsx
+Experiments: 2
+No checkpoint found. Starting fresh.
+
+🧹 Pre-run cleanup: removing intermediate artifacts (results folder preserved)…
+🧹 Cleanup found no intermediate artifacts to remove
+
+======================================================================
+RUNNING 2 EXPERIMENTS
+======================================================================
+
+
+======================================================================
+EXPERIMENT 1/2 (ID: 0)
+======================================================================
+  sft_samples: 500
+  dpo_pairs: 50
+  candidates_per_question: 4
+  sft_dataset_name: tatsu-lab/alpaca
+  eval_split: test
+  eval_max_samples: 200
+  random_seed: 42
+  base_model: Qwen/Qwen2.5-1.5B-Instruct
+  rm_base_model: Qwen/Qwen2.5-1.5B-Instruct
+  lora_r: 8
+  lora_alpha: 16
+  dpo_beta: 0.1
+  gradient_accumulation_steps: 4
+  quantization_bits: 4
+  iterative_dpo_rounds: 1
+  sft_epochs: 2
+  rm_epochs: 3
+  dpo_epochs: 3
+  sft_batch_size: 2
+  rm_batch_size: 2
+  dpo_batch_size: 1
+  temperature: 0.7
+  max_new_tokens_gen: 256
+  max_new_tokens_eval: 400
+  eval_batch_size: 2
+  use_rm_scoring: False
+  rm_weight: 0.5
+  correctness_weight: 1.0
+
+======================================================================
+EXPERIMENT 0
+======================================================================
+🧹 Clearing intermediate artifacts before experiment run…
+🧹 Cleanup found no intermediate artifacts to remove
+
+🎮 GPU Memory: 0.00 GB allocated, 0.00 GB reserved
+🎲 Random seeds set to 42
+🧯 Storage guard triggered: home_used=12.80GiB (cap 9.50), free=534.86GiB (min 2.00)
+🧹 Purging caches & training artifacts...
+  ✓ Cleared cache: /home/jovyan/llmpt/.runtime_cache/huggingface/hub
+  ✓ Cleared cache: /home/jovyan/llmpt/.runtime_cache/huggingface/datasets
+  ✓ Cleared cache: /home/jovyan/llmpt/.runtime_cache/huggingface
+  ✓ Cleared runtime cache: /home/jovyan/llmpt/.runtime_cache
+  ✓ Removed training artifacts
+
+📊 Disk: 70.1% used  (534.86 GB free)
+   ✅ Sufficient space
+✅ Storage guard satisfied: home_used=0.10GiB, free=534.86GiB
+
+[Stage 1/6] Cold-Start SFT…
+Traceback (most recent call last):
+  File "/tmp/ipykernel_1438/569399147.py", line 20, in <module>
+    results_df = run_all_experiments(EXPERIMENTS, RESULTS_FILE, CHECKPOINT_FILE)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jovyan/llmpt/dorado/orchestrator.py", line 289, in run_all_experiments
+    res = run_single_experiment(cfg)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jovyan/llmpt/dorado/orchestrator.py", line 109, in run_single_experiment
+    sft_path = run_sft_stage(exp_config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jovyan/llmpt/dorado/sft.py", line 76, in run_sft_stage
+    trainer.train()
+  File "/opt/conda/lib/python3.11/site-packages/transformers/trainer.py", line 1412, in train
+    return inner_training_loop(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.11/site-packages/transformers/trainer.py", line 1742, in _inner_training_loop
+    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.11/site-packages/transformers/trainer.py", line 1979, in training_step
+    self.accelerator.backward(loss, **kwargs)
+  File "/opt/conda/lib/python3.11/site-packages/accelerate/accelerator.py", line 2852, in backward
+    loss.backward(**kwargs)
+  File "/opt/conda/lib/python3.11/site-packages/torch/_tensor.py", line 581, in backward
+    torch.autograd.backward(
+  File "/opt/conda/lib/python3.11/site-packages/torch/autograd/__init__.py", line 347, in backward
+    _engine_run_backward(
+  File "/opt/conda/lib/python3.11/site-packages/torch/autograd/graph.py", line 825, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
