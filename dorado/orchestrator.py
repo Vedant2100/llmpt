@@ -1,6 +1,7 @@
 """Experiment orchestrator: single-experiment runner and full sweep."""
 
 import gc
+import glob
 import os
 import shutil
 import time
@@ -36,14 +37,30 @@ from dorado.config import (
 
 
 def cleanup_artifacts():
-    """Remove model artifacts to free disk space."""
-    for d in ("coldstart_dorado", "reward_model", "dorado_final"):
-        if os.path.exists(d):
-            shutil.rmtree(d, ignore_errors=True)
-    for i in range(1, 10):
-        for prefix in (f"dorado_round_{i}", f"reward_model_round_{i}"):
-            if os.path.exists(prefix):
-                shutil.rmtree(prefix, ignore_errors=True)
+    """Remove intermediate training artifacts while preserving results outputs."""
+    artifact_patterns = (
+        "coldstart_*",
+        "reward_model*",
+        "dorado_final*",
+        "dorado_round_*",
+    )
+    removed_paths: list[str] = []
+    for pattern in artifact_patterns:
+        for path in glob.glob(pattern):
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+                removed_paths.append(path)
+            elif os.path.exists(path):
+                os.remove(path)
+                removed_paths.append(path)
+    if removed_paths:
+        print(
+            "🧹 Cleanup removed "
+            f"{len(removed_paths)} intermediate artifact(s): "
+            + ", ".join(sorted(removed_paths))
+        )
+    else:
+        print("🧹 Cleanup found no intermediate artifacts to remove")
     try:
         clear_gpu()
     except Exception as e:
@@ -57,6 +74,9 @@ def run_single_experiment(exp_config: dict) -> dict:
     """Execute one full experiment (SFT → iterative DPO → eval)."""
     exp_id = exp_config["experiment_id"]
     print(f"\n{'='*70}\nEXPERIMENT {exp_id}\n{'='*70}")
+
+    print("🧹 Clearing intermediate artifacts before experiment run…")
+    cleanup_artifacts()
 
     gc.collect()
     if torch.cuda.is_available():
@@ -245,6 +265,11 @@ def run_all_experiments(
         print(f"Resuming – {len(completed_ids)} experiments already done.")
     else:
         print("No checkpoint found. Starting fresh.")
+
+    print(
+        "\n🧹 Pre-run cleanup: removing intermediate artifacts (results folder preserved)…"
+    )
+    cleanup_artifacts()
 
     print(f"\n{'='*70}\nRUNNING {len(experiments)} EXPERIMENTS\n{'='*70}\n")
 
