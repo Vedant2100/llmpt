@@ -207,3 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 dorado.pdf
+.runtime_cache/
+dorado_final/
+coldstart_dorado/
