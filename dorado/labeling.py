@@ -34,6 +34,8 @@ def run_labeling_stage(
         "correct_incorrect_pairs": 0,
         "correct_correct_pairs": 0,
         "length_heuristic_pairs": 0,
+        "format_compliant_candidates": 0,
+        "total_candidates": 0,
         "all_wrong_dropped_questions": 0,
         "all_correct_questions": 0,
         "mixed_questions": 0,
@@ -68,6 +70,10 @@ def run_labeling_stage(
         gt_answer = gt[question]
         predicted = extract_answer_from_response(response)
         is_correct = predicted == gt_answer
+        has_marker = "####" in response
+        pair_stats["total_candidates"] += 1
+        if has_marker:
+            pair_stats["format_compliant_candidates"] += 1
 
         rm_score = 0.0
         if rm_model is not None:
@@ -85,7 +91,7 @@ def run_labeling_stage(
                 rm_score = probs[0][1].item() * exp_config["rm_weight"]
             pair_stats["rm_scores_used"].append(probs[0][1].item())
 
-        return is_correct, rm_score
+        return is_correct, rm_score, has_marker
 
     # ── build pairs ──────────────────────────────────────────────────
     all_wrong_count = 0
@@ -95,12 +101,13 @@ def run_labeling_stage(
     for q, samples in tqdm(all_samples.items(), desc="Labeling candidates"):
         scored = []
         for response in samples:
-            is_correct, rm_score = score_response(q, response)
+            is_correct, rm_score, has_marker = score_response(q, response)
             scored.append(
                 {
                     "response": response,
                     "is_correct": is_correct,
                     "rm_score": rm_score,
+                    "has_marker": has_marker,
                     "length": len(response),
                 }
             )
@@ -131,13 +138,51 @@ def run_labeling_stage(
 
         mixed_count += 1
         pair_stats["mixed_questions"] += 1
-        chosen = max(correct, key=lambda x: x["length"])
-        rejected = min(incorrect, key=lambda x: x["length"])
+        chosen = max(
+            correct,
+            key=lambda x: (
+                int(x["has_marker"]),
+                x["rm_score"],
+                x["length"],
+            ),
+        )
+        rejected = max(
+            incorrect,
+            key=lambda x: (
+                int(x["has_marker"]),
+                x["rm_score"],
+                x["length"],
+            ),
+        )
 
         pairs.append((q, chosen["response"], rejected["response"]))
         labels.append(1)
         pair_stats["num_pairs"] += 1
         pair_stats["correct_incorrect_pairs"] += 1
+
+        if len(correct) >= 2 and len(incorrect) >= 2:
+            chosen_2 = sorted(
+                correct,
+                key=lambda x: (
+                    int(x["has_marker"]),
+                    x["rm_score"],
+                    x["length"],
+                ),
+                reverse=True,
+            )[1]
+            rejected_2 = sorted(
+                incorrect,
+                key=lambda x: (
+                    int(x["has_marker"]),
+                    x["rm_score"],
+                    x["length"],
+                ),
+                reverse=True,
+            )[1]
+            pairs.append((q, chosen_2["response"], rejected_2["response"]))
+            labels.append(1)
+            pair_stats["num_pairs"] += 1
+            pair_stats["correct_incorrect_pairs"] += 1
 
         if use_rm and len(correct) >= 2:
             ranked = sorted(correct, key=lambda x: x["rm_score"], reverse=True)
@@ -178,10 +223,24 @@ def run_labeling_stage(
     if pair_stats["num_pairs"] == 0:
         pipeline_warn("Labeling: produced zero preference pairs total.")
 
+    if pair_stats["total_candidates"] > 0:
+        format_ratio = (
+            pair_stats["format_compliant_candidates"] / pair_stats["total_candidates"]
+        )
+        if format_ratio < 0.9:
+            pipeline_warn(
+                f"Labeling: only {format_ratio:.0%} candidates followed '####' format."
+            )
+
     print(f"✅ Created {pair_stats['num_pairs']} preference pairs")
     print(f"   - Correct vs Incorrect: {pair_stats['correct_incorrect_pairs']}")
     print(f"   - Correct vs Correct: {pair_stats['correct_correct_pairs']}")
     print(f"   - Length heuristic:   {pair_stats['length_heuristic_pairs']}")
+    if pair_stats["total_candidates"] > 0:
+        format_ratio = (
+            pair_stats["format_compliant_candidates"] / pair_stats["total_candidates"]
+        )
+        print(f"   - Format compliant:   {format_ratio:.1%}")
     print(f"   - All-wrong dropped:  {all_wrong_count}")
     print(f"   - All-correct qs:     {all_correct_count}")
     print(f"   - Mixed qs:           {mixed_count}")

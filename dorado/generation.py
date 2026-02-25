@@ -25,10 +25,7 @@ def run_candidate_generation(
         "openai/gsm8k", "main", split=f"train[:{exp_config['dpo_pairs']}]"
     )
     QUESTIONS = [x["question"] for x in math_ds]
-    GT = {
-        x["question"]: extract_answer_from_ground_truth(x["answer"])
-        for x in math_ds
-    }
+    GT = {x["question"]: extract_answer_from_ground_truth(x["answer"]) for x in math_ds}
 
     from dorado.config import make_model_load_kwargs
 
@@ -44,7 +41,16 @@ def run_candidate_generation(
     tok = AutoTokenizer.from_pretrained(BASE)
     tok.pad_token = tok.eos_token
 
-    MATH_PROMPT = "Solve this math problem step by step. Put your final numeric answer after ####.\n\nQuestion: {q}\n\nAnswer:"
+    MATH_PROMPT = (
+        "Solve this math problem step by step. "
+        "You MUST end with exactly one final line in the format: #### <number>.\n\n"
+        "Question: {q}\n\nAnswer:"
+    )
+    RETRY_PROMPT = (
+        "Solve the problem and return the final numeric answer in strict format. "
+        "End with exactly one line: #### <number>.\n\n"
+        "Question: {q}\n\nAnswer:"
+    )
 
     ALL_SAMPLES: dict[str, list[str]] = {}
     for q in tqdm(QUESTIONS, desc="Generating Candidates"):
@@ -59,10 +65,34 @@ def run_candidate_generation(
             eos_token_id=tok.eos_token_id,
             pad_token_id=tok.pad_token_id,
         )
-        ALL_SAMPLES[q] = [
+        responses = [
             tok.decode(o[inputs.input_ids.shape[-1] :], skip_special_tokens=True)
             for o in outs
         ]
+
+        if exp_config.get("retry_failed_generations", True):
+            retry_temperature = exp_config.get("retry_temperature", 0.2)
+            for idx, resp in enumerate(responses):
+                if "####" in resp and resp.strip():
+                    continue
+                retry_inputs = tok(RETRY_PROMPT.format(q=q), return_tensors="pt").to(
+                    model.device
+                )
+                retry_out = model.generate(
+                    **retry_inputs,
+                    max_new_tokens=exp_config["max_new_tokens_gen"],
+                    num_return_sequences=1,
+                    do_sample=True,
+                    temperature=retry_temperature,
+                    eos_token_id=tok.eos_token_id,
+                    pad_token_id=tok.pad_token_id,
+                )
+                responses[idx] = tok.decode(
+                    retry_out[0][retry_inputs.input_ids.shape[-1] :],
+                    skip_special_tokens=True,
+                )
+
+        ALL_SAMPLES[q] = responses
 
     # ── post-generation diagnostics ─────────────────────────────────
     empty_count = 0

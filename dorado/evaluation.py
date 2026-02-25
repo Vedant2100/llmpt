@@ -1,6 +1,7 @@
 """Stage 6: Evaluation with bootstrap CIs and McNemar's test."""
 
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -95,12 +96,34 @@ def evaluate_model(
         from dorado.config import make_model_load_kwargs
 
         bits = exp_config.get("quantization_bits", 0)
-        load_kwargs = make_model_load_kwargs(exp_config)
-        label = f"{bits}-bit" if bits > 0 else "fp16"
+        adapter_eval_fp16 = exp_config.get("eval_adapter_in_fp16", True)
+        strict_adapter_loading = exp_config.get("strict_adapter_loading", True)
+        if is_adapter and adapter_eval_fp16 and bits > 0:
+            eval_cfg = dict(exp_config)
+            eval_cfg["quantization_bits"] = 0
+            load_kwargs = make_model_load_kwargs(eval_cfg)
+            label = "fp16"
+        else:
+            load_kwargs = make_model_load_kwargs(exp_config)
+            label = f"{bits}-bit" if bits > 0 else "fp16"
         if is_adapter:
             print(f"Loading {model_label} as PEFT adapter ({label})...")
             model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
-            model = PeftModel.from_pretrained(model, model_path)
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                model = PeftModel.from_pretrained(model, model_path)
+            adapter_warnings = [str(x.message) for x in w]
+            missing_key_warn = [
+                msg for msg in adapter_warnings if "missing adapter keys" in msg.lower()
+            ]
+            if missing_key_warn:
+                msg = (
+                    f"Eval: {model_label} adapter load reported missing keys. "
+                    f"Details: {missing_key_warn[0]}"
+                )
+                if strict_adapter_loading:
+                    raise RuntimeError(msg)
+                pipeline_warn(msg)
         else:
             print(f"Loading {model_label} as full model ({label})...")
             model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
@@ -221,10 +244,7 @@ def run_full_evaluation(
         eval_ds = eval_ds.select(range(min(max_n, len(eval_ds))))
 
     questions = [x["question"] for x in eval_ds]
-    gt = {
-        x["question"]: extract_answer_from_ground_truth(x["answer"])
-        for x in eval_ds
-    }
+    gt = {x["question"]: extract_answer_from_ground_truth(x["answer"]) for x in eval_ds}
 
     all_metrics: dict[str, dict] = {}
     all_results: list[dict] = []

@@ -93,13 +93,18 @@ def run_dpo_training(
     print(f"Loading base model + SFT adapter for DPO ({bits}-bit if >0, else fp16)...")
     from dorado.config import make_model_load_kwargs
 
-    load_kwargs = make_model_load_kwargs(exp_config)
+    merge_in_fp16 = exp_config.get("dequantize_for_adapter_merge", True)
+    if merge_in_fp16 and bits > 0:
+        print("Dequantizing base load for clean adapter merge before DPO...")
+        merge_cfg = dict(exp_config)
+        merge_cfg["quantization_bits"] = 0
+        load_kwargs = make_model_load_kwargs(merge_cfg)
+    else:
+        load_kwargs = make_model_load_kwargs(exp_config)
     model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
 
     if os.path.exists(sft_model_path):
-        print(
-            "Loading SFT adapter – will dequantize during merge (required for DPO)..."
-        )
+        print("Loading SFT adapter and merging into base for DPO initialization...")
         model = PeftModel.from_pretrained(model, sft_model_path)
         model = model.merge_and_unload()
     else:
@@ -108,6 +113,8 @@ def run_dpo_training(
         )
 
     model.config.pad_token_id = tok.pad_token_id
+    if hasattr(model, "peft_config"):
+        delattr(model, "peft_config")
 
     peft_config = LoraConfig(
         r=exp_config["lora_r"],

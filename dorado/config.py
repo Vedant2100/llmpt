@@ -10,9 +10,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # ── Parameter dictionaries (edit these lists to sweep) ───────────────
 DATASET_CONFIG = {
-    "sft_samples": [500],
-    "dpo_pairs": [50],
-    "candidates_per_question": [4],
+    "sft_samples": [2000],
+    "dpo_pairs": [100],
+    "candidates_per_question": [5],
     "sft_dataset_name": ["tatsu-lab/alpaca"],
     "eval_split": ["test"],
     "eval_max_samples": [200],
@@ -20,14 +20,14 @@ DATASET_CONFIG = {
 }
 
 MODEL_CONFIG = {
-    "base_model": ["Qwen/Qwen2.5-1.5B-Instruct"],
-    "rm_base_model": ["Qwen/Qwen2.5-1.5B-Instruct"],
+    "base_model": ["Qwen/Qwen2.5-Math-1.5B"],
+    "rm_base_model": ["Qwen/Qwen2.5-Math-1.5B"],
 }
 
 ARCHITECTURE_CONFIG = {
     "lora_r": [8],
     "lora_alpha": [16],
-    "dpo_beta": [0.1],
+    "dpo_beta": [0.01],
     "gradient_accumulation_steps": [4],
     "quantization_bits": [4],  # fair A/B: fp16 vs 4-bit
 }
@@ -90,22 +90,27 @@ def make_model_load_kwargs(exp_config: dict, num_labels: int | None = None) -> d
 
 TRAINING_CONFIG = {
     "iterative_dpo_rounds": [1],
-    "sft_epochs": [2],
+    "sft_epochs": [3],
     "rm_epochs": [3],
-    "dpo_epochs": [3],
+    "dpo_epochs": [1],
     "sft_batch_size": [2],
     "rm_batch_size": [2],
     "dpo_batch_size": [1],
 }
 
 GENERATION_CONFIG = {
-    "temperature": [0.7],
+    "temperature": [1.0],
     "max_new_tokens_gen": [256],
     "max_new_tokens_eval": [400],
+    "retry_failed_generations": [True],
+    "retry_temperature": [0.2],
 }
 
 EVAL_CONFIG = {
     "eval_batch_size": [2],
+    "strict_adapter_loading": [True],
+    "dequantize_for_adapter_merge": [True],
+    "eval_adapter_in_fp16": [True],
 }
 
 DUAL_PREFERENCE_CONFIG = {
