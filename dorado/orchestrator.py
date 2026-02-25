@@ -98,6 +98,15 @@ def run_single_experiment(exp_config: dict) -> dict:
     enforce_storage_budget()
 
     results: dict = {"experiment_id": exp_id, "status": "in_progress", "error": None}
+
+    def set_protected_artifacts(paths: list[str]):
+        """Protect active adapter artifacts from storage-guard deletion."""
+        normalized = [p for p in paths if p]
+        if normalized:
+            os.environ["DORADO_PROTECTED_ARTIFACTS"] = os.pathsep.join(normalized)
+        elif "DORADO_PROTECTED_ARTIFACTS" in os.environ:
+            del os.environ["DORADO_PROTECTED_ARTIFACTS"]
+
     # Drain any stale warnings from a previous run
     drain_pipeline_warnings()
     start = time.time()
@@ -107,6 +116,7 @@ def run_single_experiment(exp_config: dict) -> dict:
         enforce_storage_budget()
         print("\n[Stage 1/6] Cold-Start SFT…")
         sft_path = run_sft_stage(exp_config)
+        set_protected_artifacts([sft_path])
 
         # Iterative DPO
         round_metrics: list[dict] = []
@@ -154,6 +164,7 @@ def run_single_experiment(exp_config: dict) -> dict:
                 print(f"❌ DPO round {r} produced no model. Stopping iterative loop.")
                 break
             prev_path = dpo_out
+            set_protected_artifacts([sft_path, prev_path])
 
             round_metrics.append(
                 {
@@ -239,6 +250,8 @@ def run_single_experiment(exp_config: dict) -> dict:
         results["warning_count"] = len(warnings)
         print(f"\n❌ Experiment {exp_id} failed: {e}")
         traceback.print_exc()
+    finally:
+        set_protected_artifacts([])
 
     return results
 

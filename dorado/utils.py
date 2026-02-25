@@ -13,6 +13,29 @@ import torch
 import numpy as np
 
 
+def _get_protected_artifact_paths() -> set[str]:
+    """Read protected artifact paths from env and normalize to absolute paths."""
+    raw = os.environ.get("DORADO_PROTECTED_ARTIFACTS", "").strip()
+    if not raw:
+        return set()
+    parts = [p.strip() for p in raw.split(os.pathsep) if p.strip()]
+    return {os.path.abspath(p) for p in parts}
+
+
+def _safe_remove_path(path: str, protected_abs_paths: set[str]) -> bool:
+    """Remove path unless protected. Returns True when removed."""
+    abs_path = os.path.abspath(path)
+    if abs_path in protected_abs_paths:
+        return False
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+        return True
+    if os.path.exists(path):
+        os.remove(path)
+        return True
+    return False
+
+
 def get_mixed_precision_kwargs() -> dict:
     """Return safe mixed-precision flags for HF Trainer configs."""
     if not torch.cuda.is_available():
@@ -116,6 +139,7 @@ def drain_pipeline_warnings() -> list[str]:
 def cleanup_storage():
     """Aggressive cleanup to free disk space (pip cache, HF cache, artifacts)."""
     print("🧹 Purging caches & training artifacts...")
+    protected_abs_paths = _get_protected_artifact_paths()
 
     subprocess.run(
         ["pip", "cache", "purge"],
@@ -147,12 +171,14 @@ def cleanup_storage():
         "dorado_round_*",
         "runs/",
     ]
+    skipped = 0
     for pattern in artifacts:
         for path in glob.glob(pattern):
-            if os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                os.remove(path)
+            removed = _safe_remove_path(path, protected_abs_paths)
+            if not removed:
+                skipped += 1
+    if skipped:
+        print(f"  ✓ Preserved {skipped} protected active artifact(s)")
     print("  ✓ Removed training artifacts")
 
     total, used, free = shutil.disk_usage("/")
@@ -203,6 +229,7 @@ def enforce_storage_budget(
         f"home_used={home_used:.2f}GiB (cap {max_home_gb:.2f}), "
         f"free={free_gb:.2f}GiB (min {min_free_gb:.2f})"
     )
+    protected_abs_paths = _get_protected_artifact_paths()
 
     # Step 1: remove run artifacts first
     for pattern in (
@@ -212,10 +239,7 @@ def enforce_storage_budget(
         "dorado_round_*",
     ):
         for path in glob.glob(pattern):
-            if os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
-            elif os.path.exists(path):
-                os.remove(path)
+            _safe_remove_path(path, protected_abs_paths)
 
     # Step 2: clear caches (home + redirected)
     cleanup_storage()
