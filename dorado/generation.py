@@ -1,64 +1,124 @@
-"""Stage 2: Candidate generation from a (possibly adapter-augmented) model."""
+"""Stage 2: Candidate generation for self-improvement on MATH data."""
 
 import os
+import sys
+import json
 
-from datasets import load_dataset
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from peft import PeftModel
 
-from dorado.utils import clear_gpu, pipeline_warn, extract_answer_from_ground_truth
+from dorado.utils import clear_gpu, pipeline_warn
+
+
+def _load_math_prompts(exp_config: dict) -> tuple[list[str], dict[str, str]]:
+    """Load math prompts and ground truth from eval/data/math/test.jsonl.
+
+    Returns (questions, ground_truth_map).
+    """
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    math_data_file = os.path.join(eval_dir, "data", "math", "test.jsonl")
+
+    if not os.path.exists(math_data_file):
+        pipeline_warn(
+            f"MATH data not found at {math_data_file}. "
+            f"Attempting to load from HuggingFace datasets..."
+        )
+        return _load_math_from_hf(exp_config)
+
+    questions = []
+    gt_map = {}
+    with open(math_data_file, "r", encoding="utf-8") as f:
+        for line in f:
+            d = json.loads(line.strip())
+            q = d.get("problem", d.get("question", ""))
+            a = d.get("answer", d.get("solution", ""))
+            if q:
+                questions.append(q)
+                gt_map[q] = a
+
+    count = exp_config.get("math_prompt_count", 500)
+    if count and count < len(questions):
+        questions = questions[:count]
+        gt_map = {q: gt_map[q] for q in questions}
+
+    print(f"📦 Loaded {len(questions)} MATH prompts from {math_data_file}")
+    return questions, gt_map
+
+
+def _load_math_from_hf(exp_config: dict) -> tuple[list[str], dict[str, str]]:
+    """Fallback: load MATH dataset from HuggingFace."""
+    from datasets import load_dataset
+
+    count = exp_config.get("math_prompt_count", 500)
+    ds = load_dataset(
+        "lighteval/MATH", "all", split=f"train[:{count}]", trust_remote_code=True
+    )
+    questions = [x["problem"] for x in ds]
+    gt_map = {x["problem"]: x["solution"] for x in ds}
+    print(f"📦 Loaded {len(questions)} MATH prompts from HuggingFace")
+    return questions, gt_map
 
 
 def run_candidate_generation(
     exp_config: dict,
     generator_model_path: str = "coldstart_dorado",
 ) -> tuple[dict, dict, list]:
-    """Generate multiple candidate answers per GSM8K question.
+    """Generate multiple candidate answers per MATH question.
+
+    Uses the instruction format: "Please reason step by step, and put your
+    final answer within \\boxed{}."
 
     Returns ``(all_samples, ground_truth_map, questions)``.
     """
     BASE = exp_config["base_model"]
 
-    math_ds = load_dataset(
-        "openai/gsm8k", "main", split=f"train[:{exp_config['dpo_pairs']}]"
-    )
-    QUESTIONS = [x["question"] for x in math_ds]
-    GT = {x["question"]: extract_answer_from_ground_truth(x["answer"]) for x in math_ds}
+    QUESTIONS, GT = _load_math_prompts(exp_config)
 
+    # ── load model ───────────────────────────────────────────────────
     from dorado.config import make_model_load_kwargs
 
     load_kwargs = make_model_load_kwargs(exp_config)
     model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+
+    is_adapter = os.path.exists(
+        os.path.join(generator_model_path, "adapter_config.json")
+    )
     if os.path.exists(generator_model_path):
-        model = PeftModel.from_pretrained(model, generator_model_path)
+        if is_adapter:
+            model = PeftModel.from_pretrained(model, generator_model_path)
+        else:
+            del model
+            clear_gpu()
+            model = AutoModelForCausalLM.from_pretrained(
+                generator_model_path, **load_kwargs
+            )
     else:
         pipeline_warn(
-            f"Generation: adapter not found at '{generator_model_path}'. Using base model."
+            f"Generation: model not found at '{generator_model_path}'. Using base."
         )
 
-    tok = AutoTokenizer.from_pretrained(BASE)
-    tok.pad_token = tok.eos_token
+    tok = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
-    MATH_PROMPT = (
-        "Solve this math problem step by step. "
-        "You MUST end with exactly one final line in the format: #### <number>.\n\n"
-        "Question: {q}\n\nAnswer:"
-    )
-    RETRY_PROMPT = (
-        "Solve the problem and return the final numeric answer in strict format. "
-        "End with exactly one line: #### <number>.\n\n"
-        "Question: {q}\n\nAnswer:"
-    )
+    SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
 
+    # ── generate candidates ──────────────────────────────────────────
     ALL_SAMPLES: dict[str, list[str]] = {}
     for q in tqdm(QUESTIONS, desc="Generating Candidates"):
-        prompt = MATH_PROMPT.format(q=q)
-        inputs = tok(prompt, return_tensors="pt").to(model.device)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": q},
+        ]
+        prompt_text = tok.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = tok(prompt_text, return_tensors="pt").to(model.device)
         outs = model.generate(
             **inputs,
-            max_new_tokens=exp_config["max_new_tokens_gen"],
+            max_new_tokens=exp_config.get("max_new_tokens_gen", 2048),
             num_return_sequences=exp_config["candidates_per_question"],
             do_sample=True,
             temperature=exp_config["temperature"],
@@ -66,54 +126,32 @@ def run_candidate_generation(
             pad_token_id=tok.pad_token_id,
         )
         responses = [
-            tok.decode(o[inputs.input_ids.shape[-1] :], skip_special_tokens=True)
+            tok.decode(o[inputs.input_ids.shape[-1]:], skip_special_tokens=True)
             for o in outs
         ]
-
-        if exp_config.get("retry_failed_generations", True):
-            retry_temperature = exp_config.get("retry_temperature", 0.2)
-            for idx, resp in enumerate(responses):
-                if "####" in resp and resp.strip():
-                    continue
-                retry_inputs = tok(RETRY_PROMPT.format(q=q), return_tensors="pt").to(
-                    model.device
-                )
-                retry_out = model.generate(
-                    **retry_inputs,
-                    max_new_tokens=exp_config["max_new_tokens_gen"],
-                    num_return_sequences=1,
-                    do_sample=True,
-                    temperature=retry_temperature,
-                    eos_token_id=tok.eos_token_id,
-                    pad_token_id=tok.pad_token_id,
-                )
-                responses[idx] = tok.decode(
-                    retry_out[0][retry_inputs.input_ids.shape[-1] :],
-                    skip_special_tokens=True,
-                )
-
         ALL_SAMPLES[q] = responses
 
-    # ── post-generation diagnostics ─────────────────────────────────
+    # ── diagnostics ──────────────────────────────────────────────────
     empty_count = 0
-    no_marker_count = 0
+    no_answer_count = 0
+    total_responses = 0
     for q, responses in ALL_SAMPLES.items():
         for r in responses:
+            total_responses += 1
             if not r.strip():
                 empty_count += 1
-            if "####" not in r:
-                no_marker_count += 1
-    total_responses = len(ALL_SAMPLES) * exp_config["candidates_per_question"]
+            if "\\boxed" not in r and "####" not in r:
+                no_answer_count += 1
+
     if empty_count > 0:
         pipeline_warn(
-            f"Generation: {empty_count}/{total_responses} candidate responses "
-            f"are empty."
+            f"Generation: {empty_count}/{total_responses} responses are empty."
         )
-    if no_marker_count > 0:
-        ratio = no_marker_count / max(total_responses, 1)
+    if no_answer_count > 0:
+        ratio = no_answer_count / max(total_responses, 1)
         pipeline_warn(
-            f"Generation: {no_marker_count}/{total_responses} ({ratio:.0%}) "
-            f"candidates lack '####' answer marker."
+            f"Generation: {no_answer_count}/{total_responses} ({ratio:.0%}) "
+            f"responses lack answer markers (\\boxed{{}} or ####)."
         )
 
     del model

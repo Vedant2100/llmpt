@@ -1,4 +1,4 @@
-"""Stage 5: Offline DPO training."""
+"""Stage 5: Offline DPO training with Shangjian's hyperparameters."""
 
 import os
 
@@ -19,15 +19,20 @@ def run_dpo_training(
 ) -> str | None:
     """Run DPO training on preference pairs.
 
-    Returns the path to the saved adapter, or *None* on failure.
+    Uses Shangjian's actual hyperparameters: β=0.1, lr=5e-7, cosine schedule,
+    warmup 0.1, max_grad_norm=3.0, cutoff_len=2048.
+
+    Returns the path to the saved model/adapter, or *None* on failure.
     """
     BASE = exp_config["base_model"]
+    finetuning_type = exp_config.get("finetuning_type", "lora")
 
     MATH_PROMPT = (
-        "Solve this math problem step by step. Put your final numeric answer "
-        "after ####.\n\nQuestion: {q}\n\nAnswer:"
+        "Please reason step by step, and put your final answer within \\boxed{{}}.\n\n"
+        "{q}"
     )
 
+    # ── build DPO dataset ────────────────────────────────────────────
     total_pairs = len(pairs)
     dpo_list = [
         {"prompt": MATH_PROMPT.format(q=q), "chosen": c, "rejected": r}
@@ -43,89 +48,95 @@ def run_dpo_training(
         pipeline_warn("DPO: zero valid pairs after filtering. Skipping DPO training.")
         return None
 
-    tok = AutoTokenizer.from_pretrained(BASE)
-    tok.pad_token = tok.eos_token
+    dpo_ds = datasets.Dataset.from_list(dpo_list)
 
-    prompt_max_tokens = 256
-    filtered_dpo_list = []
-    overlong_count = 0
-    for row in dpo_list:
-        prompt_len = len(tok(row["prompt"], add_special_tokens=False)["input_ids"])
-        if prompt_len <= prompt_max_tokens:
-            filtered_dpo_list.append(row)
-        else:
-            overlong_count += 1
+    # ── tokenizer ────────────────────────────────────────────────────
+    tok = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
-    if overlong_count > 0:
-        pipeline_warn(
-            f"DPO: {overlong_count}/{len(dpo_list)} pairs dropped (prompt too long > {prompt_max_tokens} tokens)."
-        )
-    if not filtered_dpo_list:
-        pipeline_warn(
-            "DPO: zero valid pairs after prompt-length filtering. Skipping DPO training."
-        )
-        return None
-
-    dpo_ds = datasets.Dataset.from_list(filtered_dpo_list)
-
+    # ── DPO config (Shangjian's hyperparameters) ─────────────────────
+    mp_kwargs = get_mixed_precision_kwargs()
     dpo_args = DPOConfig(
         output_dir=output_path,
-        per_device_train_batch_size=exp_config["dpo_batch_size"],
-        gradient_accumulation_steps=exp_config["gradient_accumulation_steps"],
-        num_train_epochs=exp_config["dpo_epochs"],
-        beta=exp_config["dpo_beta"],
-        logging_steps=5,
+        per_device_train_batch_size=exp_config.get("dpo_batch_size", 4),
+        gradient_accumulation_steps=exp_config.get("gradient_accumulation_steps", 4),
+        num_train_epochs=exp_config.get("dpo_epochs", 1),
+        beta=exp_config.get("dpo_beta", 0.1),
+        learning_rate=exp_config.get("dpo_lr", 5e-7),
+        lr_scheduler_type=exp_config.get("dpo_lr_scheduler", "cosine"),
+        warmup_ratio=exp_config.get("dpo_warmup_ratio", 0.1),
+        max_grad_norm=exp_config.get("dpo_max_grad_norm", 3.0),
+        max_length=exp_config.get("dpo_max_length", 2048),
+        logging_steps=1,
         report_to="none",
         save_strategy="no",
-        optim="paged_adamw_8bit",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        max_length=512,
-        **get_mixed_precision_kwargs(),
+        **mp_kwargs,
         remove_unused_columns=False,
+        seed=exp_config.get("random_seed", 42),
     )
 
-    # ── load & merge SFT adapter into base ───────────────────────────
-    # Contract: DPO is trained as a single adapter on top of a merged
-    # (base + SFT) model snapshot. Evaluation should therefore load the
-    # resulting DORADO adapter directly on BASE, without re-stacking SFT.
-    bits = exp_config.get("quantization_bits", 0)
-    print(f"Loading base model + SFT adapter for DPO ({bits}-bit if >0, else fp16)...")
+    # ── load model ───────────────────────────────────────────────────
     from dorado.config import make_model_load_kwargs
 
-    merge_in_fp16 = exp_config.get("dequantize_for_adapter_merge", True)
-    if merge_in_fp16 and bits > 0:
-        print("Dequantizing base load for clean adapter merge before DPO...")
-        merge_cfg = dict(exp_config)
-        merge_cfg["quantization_bits"] = 0
-        load_kwargs = make_model_load_kwargs(merge_cfg)
-    else:
-        load_kwargs = make_model_load_kwargs(exp_config)
-    model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+    load_kwargs = make_model_load_kwargs(exp_config)
+    print(f"Loading base model for DPO (finetuning_type={finetuning_type})...")
 
-    if os.path.exists(sft_model_path):
-        print("Loading SFT adapter and merging into base for DPO initialization...")
-        model = PeftModel.from_pretrained(model, sft_model_path)
-        model = model.merge_and_unload()
+    if finetuning_type == "full":
+        # Full fine-tuning: load SFT model directly (or base + merge adapter)
+        if os.path.exists(sft_model_path):
+            # Check if SFT output is an adapter or a full model
+            is_adapter = os.path.exists(
+                os.path.join(sft_model_path, "adapter_config.json")
+            )
+            if is_adapter:
+                print("Loading base + merging SFT adapter for full DPO...")
+                model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+                model = PeftModel.from_pretrained(model, sft_model_path)
+                model = model.merge_and_unload()
+            else:
+                print("Loading full SFT model for DPO...")
+                model = AutoModelForCausalLM.from_pretrained(
+                    sft_model_path, **load_kwargs
+                )
+        else:
+            pipeline_warn(
+                f"DPO: SFT model not found at '{sft_model_path}'. Using base model."
+            )
+            model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+
+        model.config.pad_token_id = tok.pad_token_id
+        peft_config = None  # No LoRA for full fine-tuning
+
     else:
-        pipeline_warn(
-            f"DPO: SFT adapter not found at '{sft_model_path}'. Using base model."
+        # LoRA fine-tuning: load base, merge SFT adapter, apply new LoRA
+        model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+
+        if os.path.exists(sft_model_path):
+            print("Loading SFT adapter and merging into base for DPO...")
+            model = PeftModel.from_pretrained(model, sft_model_path)
+            model = model.merge_and_unload()
+        else:
+            pipeline_warn(
+                f"DPO: SFT adapter not found at '{sft_model_path}'. Using base model."
+            )
+
+        model.config.pad_token_id = tok.pad_token_id
+        if hasattr(model, "peft_config"):
+            delattr(model, "peft_config")
+
+        peft_config = LoraConfig(
+            r=exp_config.get("lora_r", 16),
+            lora_alpha=exp_config.get("lora_alpha", 32),
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         )
 
-    model.config.pad_token_id = tok.pad_token_id
-    if hasattr(model, "peft_config"):
-        delattr(model, "peft_config")
-
-    peft_config = LoraConfig(
-        r=exp_config["lora_r"],
-        lora_alpha=exp_config["lora_alpha"],
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=["q_proj", "v_proj"],
-    )
-
     # ── train ────────────────────────────────────────────────────────
-    print("Initializing DPOTrainer...")
+    print(f"Initializing DPOTrainer ({len(dpo_list)} pairs)...")
     trainer = DPOTrainer(
         model=model,
         args=dpo_args,
@@ -138,5 +149,5 @@ def run_dpo_training(
 
     del model, trainer
     clear_gpu()
-    print(f"✅ DPO Complete. '{output_path}' saved.")
+    print(f"✅ DPO complete. Saved to '{output_path}'")
     return output_path

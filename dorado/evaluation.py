@@ -1,26 +1,60 @@
-"""Stage 6: Evaluation with bootstrap CIs and McNemar's test."""
+"""Stage 6: Evaluation on MATH benchmarks with proper answer parsing."""
 
 import os
-import warnings
+import sys
+import json
 
 import numpy as np
 import pandas as pd
 import torch
-from datasets import load_dataset
 from tqdm.auto import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
+from math import comb
 
-from dorado.utils import (
-    clear_gpu,
-    extract_answer_from_response,
-    extract_answer_from_ground_truth,
-    pipeline_warn,
-)
+from dorado.utils import clear_gpu, pipeline_warn
+
+
+# ── eval utils integration ───────────────────────────────────────────
+
+def _setup_eval_imports():
+    """Add eval/ directory to sys.path and import answer checking utils."""
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    if eval_dir not in sys.path:
+        sys.path.insert(0, eval_dir)
+    try:
+        from utils.parser import extract_answer, parse_question, parse_ground_truth, strip_string
+        from utils.grader import check_is_correct
+        return extract_answer, parse_question, parse_ground_truth, check_is_correct, strip_string
+    except ImportError as e:
+        pipeline_warn(f"Could not import eval utilities: {e}")
+        return None, None, None, None, None
+
+
+# ── data loading ─────────────────────────────────────────────────────
+
+def _load_benchmark(benchmark_name: str, max_samples: int | None = None) -> list[dict]:
+    """Load benchmark data from eval/data/{name}/test.jsonl."""
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    data_file = os.path.join(eval_dir, "data", benchmark_name, "test.jsonl")
+
+    if not os.path.exists(data_file):
+        pipeline_warn(f"Benchmark data not found: {data_file}")
+        return []
+
+    examples = []
+    with open(data_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                examples.append(json.loads(line))
+
+    if max_samples and max_samples < len(examples):
+        examples = examples[:max_samples]
+
+    print(f"📦 Loaded {len(examples)} examples from {benchmark_name}")
+    return examples
 
 
 # ── helpers ──────────────────────────────────────────────────────────
-
 
 def _batched(iterable, n):
     for i in range(0, len(iterable), n):
@@ -31,9 +65,12 @@ def bootstrap_confidence_interval(
     correct_flags, n_bootstrap: int = 1000, confidence: float = 0.95
 ) -> tuple[float, float]:
     """Return (lower, upper) bootstrap CI for accuracy."""
-    arr = np.asarray(correct_flags)
+    arr = np.asarray(correct_flags, dtype=float)
+    if len(arr) == 0:
+        return 0.0, 0.0
+    rng = np.random.default_rng(42)
     accs = [
-        np.mean(np.random.choice(arr, size=len(arr), replace=True))
+        rng.choice(arr, size=len(arr), replace=True).mean()
         for _ in range(n_bootstrap)
     ]
     alpha = 1 - confidence
@@ -43,260 +80,347 @@ def bootstrap_confidence_interval(
     )
 
 
-def mcnemar_exact_pvalue(b: int, c: int) -> float:
-    """Two-sided exact McNemar p-value from discordant counts.
-
-    Uses SciPy's binomtest when available and falls back to a pure-Python
-    binomial tail computation when needed.
-    """
-    n = b + c
+def compute_pass_at_k(is_correct_list: list[bool], k: int) -> float:
+    """Unbiased pass@k estimator."""
+    n = len(is_correct_list)
+    c = sum(is_correct_list)
     if n == 0:
+        return 0.0
+    if c == 0:
+        return 0.0
+    if n - c < k:
         return 1.0
+    return 1.0 - (comb(n - c, k) / comb(n, k))
 
-    k = min(b, c)
+
+# ── HF generate evaluation ──────────────────────────────────────────
+
+def _evaluate_hf(
+    model_path: str,
+    exp_config: dict,
+    examples: list[dict],
+    benchmark_name: str,
+) -> dict:
+    """Evaluate using HuggingFace model.generate()."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+    from dorado.config import make_model_load_kwargs
+
+    BASE = exp_config["base_model"]
+    extract_answer, parse_question_fn, parse_ground_truth_fn, check_is_correct, strip_string = (
+        _setup_eval_imports()
+    )
+
+    if extract_answer is None:
+        pipeline_warn("eval utilities not available. Cannot evaluate.")
+        return {}
+
+    # Load model
+    load_kwargs = make_model_load_kwargs(exp_config)
+    is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
+
+    if is_adapter:
+        print(f"Loading as PEFT adapter from {model_path}...")
+        model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+        model = PeftModel.from_pretrained(model, model_path)
+    elif os.path.exists(model_path) and model_path != BASE:
+        print(f"Loading full model from {model_path}...")
+        model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
+    else:
+        print(f"Loading base model {BASE}...")
+        model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+
+    tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model.config.pad_token_id = tokenizer.pad_token_id
+
+    SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
+
+    correct_cnt = 0
+    total = len(examples)
+    results = []
+
+    for batch in tqdm(
+        list(_batched(examples, exp_config.get("eval_batch_size", 4))),
+        desc=f"Eval {benchmark_name}",
+    ):
+        prompts = []
+        for ex in batch:
+            question = parse_question_fn(ex, benchmark_name)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+            ]
+            prompt_text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            prompts.append(prompt_text)
+
+        enc = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(
+            model.device
+        )
+        with torch.no_grad():
+            outs = model.generate(
+                **enc,
+                max_new_tokens=exp_config.get("max_new_tokens_eval", 2048),
+                do_sample=False,
+            )
+
+        for i, ex in enumerate(batch):
+            response = tokenizer.decode(
+                outs[i][enc.input_ids.shape[1]:], skip_special_tokens=True
+            )
+            question = parse_question_fn(ex, benchmark_name)
+            _, gt_answer = parse_ground_truth_fn(ex, benchmark_name)
+
+            predicted = extract_answer(response)
+            is_correct = check_is_correct(predicted, gt_answer) if gt_answer else False
+
+            if is_correct:
+                correct_cnt += 1
+
+            results.append({
+                "question": question,
+                "gold_answer": gt_answer,
+                "predicted_answer": predicted,
+                "is_correct": is_correct,
+                "response": response[:500],
+            })
+
+    accuracy = correct_cnt / total if total > 0 else 0.0
+    correct_flags = [r["is_correct"] for r in results]
+    ci_lo, ci_hi = bootstrap_confidence_interval(correct_flags)
+
+    del model
+    clear_gpu()
+
+    return {
+        "benchmark": benchmark_name,
+        "accuracy": accuracy,
+        "correct_count": correct_cnt,
+        "total_count": total,
+        "ci_lower": ci_lo,
+        "ci_upper": ci_hi,
+        "results": results,
+    }
+
+
+# ── vLLM evaluation ─────────────────────────────────────────────────
+
+def _evaluate_vllm(
+    model_path: str,
+    exp_config: dict,
+    examples: list[dict],
+    benchmark_name: str,
+) -> dict:
+    """Evaluate using vLLM for fast batched inference."""
     try:
-        from scipy.stats import binomtest
+        from vllm import LLM, SamplingParams
+    except ImportError:
+        pipeline_warn("vLLM not installed. Falling back to HF generate.")
+        return _evaluate_hf(model_path, exp_config, examples, benchmark_name)
 
-        return float(binomtest(k, n=n, p=0.5, alternative="two-sided").pvalue)
-    except Exception:
-        from math import comb
+    from transformers import AutoTokenizer
 
-        cdf = sum(comb(n, i) for i in range(0, k + 1)) / (2**n)
-        return float(min(1.0, 2.0 * cdf))
+    extract_answer, parse_question_fn, parse_ground_truth_fn, check_is_correct, strip_string = (
+        _setup_eval_imports()
+    )
+    if extract_answer is None:
+        pipeline_warn("eval utilities not available. Cannot evaluate.")
+        return {}
+
+    BASE = exp_config["base_model"]
+    tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
+
+    SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
+
+    # Build prompts
+    prompts = []
+    for ex in examples:
+        question = parse_question_fn(ex, benchmark_name)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ]
+        prompt_text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        prompts.append(prompt_text)
+
+    # Determine which model to load
+    is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
+    if is_adapter:
+        # vLLM doesn't natively support adapter-only; merge first
+        pipeline_warn("vLLM eval: adapter detected. Merging adapter before vLLM inference...")
+        from transformers import AutoModelForCausalLM
+        from peft import PeftModel
+        from dorado.config import make_model_load_kwargs
+
+        load_kwargs = make_model_load_kwargs(exp_config)
+        model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
+        model = PeftModel.from_pretrained(model, model_path)
+        model = model.merge_and_unload()
+
+        merged_path = model_path + "_merged"
+        model.save_pretrained(merged_path)
+        tokenizer.save_pretrained(merged_path)
+        del model
+        clear_gpu()
+        vllm_model_path = merged_path
+    else:
+        vllm_model_path = model_path if os.path.exists(model_path) else BASE
+
+    # Run vLLM
+    available_gpus = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")
+    tp_size = len([g for g in available_gpus if g.strip()])
+
+    llm = LLM(
+        model=vllm_model_path,
+        tensor_parallel_size=tp_size,
+        trust_remote_code=True,
+        gpu_memory_utilization=0.90,
+    )
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        max_tokens=exp_config.get("max_new_tokens_eval", 2048),
+    )
+
+    print(f"vLLM inference on {len(prompts)} prompts (TP={tp_size})...")
+    completions = llm.generate(prompts, sampling_params)
+
+    # Grade
+    correct_cnt = 0
+    results = []
+    for i, ex in enumerate(examples):
+        response = completions[i].outputs[0].text
+        question = parse_question_fn(ex, benchmark_name)
+        _, gt_answer = parse_ground_truth_fn(ex, benchmark_name)
+
+        predicted = extract_answer(response)
+        is_correct = check_is_correct(predicted, gt_answer) if gt_answer else False
+
+        if is_correct:
+            correct_cnt += 1
+
+        results.append({
+            "question": question,
+            "gold_answer": gt_answer,
+            "predicted_answer": predicted,
+            "is_correct": is_correct,
+            "response": response[:500],
+        })
+
+    total = len(examples)
+    accuracy = correct_cnt / total if total > 0 else 0.0
+    correct_flags = [r["is_correct"] for r in results]
+    ci_lo, ci_hi = bootstrap_confidence_interval(correct_flags)
+
+    del llm
+    clear_gpu()
+
+    return {
+        "benchmark": benchmark_name,
+        "accuracy": accuracy,
+        "correct_count": correct_cnt,
+        "total_count": total,
+        "ci_lower": ci_lo,
+        "ci_upper": ci_hi,
+        "results": results,
+    }
 
 
-# ── single-model evaluation ─────────────────────────────────────────
-
+# ── public API ───────────────────────────────────────────────────────
 
 def evaluate_model(
     exp_config: dict,
     model_path: str,
     model_label: str,
-    prompts: list[str],
-    gt: dict[str, str],
-) -> dict | None:
-    """Evaluate one model; return metrics dict or *None* on skip/error."""
-    BASE = exp_config["base_model"]
+) -> dict:
+    """Evaluate a model across all configured benchmarks.
 
-    if not os.path.exists(model_path) and model_label != "BASE":
-        pipeline_warn(f"Eval: {model_label} path '{model_path}' not found. Skipping.")
-        return None
+    Returns a dict with per-benchmark metrics and aggregated results.
+    """
+    benchmarks = exp_config.get("eval_benchmarks", ["math"])
+    max_samples = exp_config.get("eval_max_samples")
+    eval_engine = exp_config.get("eval_engine", "hf")
 
-    print(f"Evaluating {model_label}...")
-    results: list[dict] = []
-    correct_flags: list[bool] = []
-    total_response_length = 0
-    parsed_answer_count = 0
-    marker_compliance_count = 0
-    unique_answers: set[str] = set()
+    print(f"\n{'─'*60}")
+    print(f"Evaluating {model_label} on {benchmarks} (engine={eval_engine})")
+    print(f"{'─'*60}")
 
-    is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
+    all_benchmark_results = {}
+    total_correct = 0
+    total_count = 0
 
-    try:
-        from dorado.config import make_model_load_kwargs
+    for bench in benchmarks:
+        examples = _load_benchmark(bench, max_samples)
+        if not examples:
+            continue
 
-        bits = exp_config.get("quantization_bits", 0)
-        adapter_eval_fp16 = exp_config.get("eval_adapter_in_fp16", True)
-        strict_adapter_loading = exp_config.get("strict_adapter_loading", True)
-        if is_adapter and adapter_eval_fp16 and bits > 0:
-            eval_cfg = dict(exp_config)
-            eval_cfg["quantization_bits"] = 0
-            load_kwargs = make_model_load_kwargs(eval_cfg)
-            label = "fp16"
-        else:
-            load_kwargs = make_model_load_kwargs(exp_config)
-            label = f"{bits}-bit" if bits > 0 else "fp16"
-        if is_adapter:
-            print(f"Loading {model_label} as PEFT adapter ({label})...")
-            model = AutoModelForCausalLM.from_pretrained(BASE, **load_kwargs)
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                model = PeftModel.from_pretrained(model, model_path)
-            adapter_warnings = [str(x.message) for x in w]
-            missing_key_warn = [
-                msg for msg in adapter_warnings if "missing adapter keys" in msg.lower()
-            ]
-            if missing_key_warn:
-                msg = (
-                    f"Eval: {model_label} adapter load reported missing keys. "
-                    f"Details: {missing_key_warn[0]}"
-                )
-                if strict_adapter_loading:
-                    raise RuntimeError(msg)
-                pipeline_warn(msg)
-        else:
-            print(f"Loading {model_label} as full model ({label})...")
-            model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
-
-        tokenizer = AutoTokenizer.from_pretrained(BASE)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        model.config.pad_token_id = tokenizer.pad_token_id
-
-        MATH_PROMPT = "Solve this math problem step by step. Put your final numeric answer after ####.\n\nQuestion: {q}\n\nAnswer:"
-
-        for batch_prompts in tqdm(
-            list(_batched(prompts, exp_config["eval_batch_size"])),
-            desc="Eval batches",
-        ):
-            formatted = [MATH_PROMPT.format(q=p) for p in batch_prompts]
-            enc = tokenizer(formatted, return_tensors="pt", padding=True).to(
-                model.device
-            )
-            outs = model.generate(
-                **enc, max_new_tokens=exp_config["max_new_tokens_eval"]
-            )
-            for i, prompt in enumerate(batch_prompts):
-                resp = tokenizer.decode(
-                    outs[i][enc.input_ids.shape[1] :], skip_special_tokens=True
-                )
-                predicted = extract_answer_from_response(resp)
-                ground_truth = gt.get(prompt, "?")
-                ok = predicted == ground_truth
-
-                correct_flags.append(ok)
-                if predicted != "None":
-                    parsed_answer_count += 1
-                    unique_answers.add(predicted)
-                if "####" in resp:
-                    marker_compliance_count += 1
-                total_response_length += len(resp.split())
-
-                results.append(
-                    {
-                        "Model": model_label,
-                        "Prompt": prompt,
-                        "Correct Answer": ground_truth,
-                        "Model Answer": predicted,
-                        "Accurate": "✅" if ok else "❌",
-                        "Full Response": resp.strip(),
-                    }
-                )
-
-        accuracy = float(np.mean(correct_flags))
-        avg_len = total_response_length / len(prompts)
-        parsed_ratio = parsed_answer_count / len(prompts)
-        marker_ratio = marker_compliance_count / len(prompts)
-        answer_diversity_ratio = len(unique_answers) / len(prompts)
-        ci_lo, ci_hi = bootstrap_confidence_interval(correct_flags)
-
-        if parsed_ratio < 0.5:
-            pipeline_warn(
-                f"Eval: {model_label} parsed ratio is {parsed_ratio:.0%} (<50%). "
-                f"Model may not be following the #### answer format."
-            )
-        if accuracy == 0.0:
-            pipeline_warn(
-                f"Eval: {model_label} has 0% accuracy. Model is not solving any problems."
-            )
-
-        print(
-            f"✨ {model_label} – Accuracy: {accuracy:.1%} "
-            f"(95% CI: [{ci_lo:.1%}, {ci_hi:.1%}])"
-        )
-        print(
-            f"   Avg Length: {avg_len:.1f} words, Parsed: {parsed_ratio:.1%}, "
-            f"Marker: {marker_ratio:.1%}, Diversity: {answer_diversity_ratio:.1%}"
-        )
-
-        del model
-        clear_gpu()
-
-        return {
-            "model_label": model_label,
-            "accuracy": accuracy,
-            "ci_lower": ci_lo,
-            "ci_upper": ci_hi,
-            "ci_width": ci_hi - ci_lo,
-            "correct_count": sum(correct_flags),
-            "total_count": len(prompts),
-            "avg_response_length": avg_len,
-            "parsed_answer_ratio": parsed_ratio,
-            "marker_compliance_ratio": marker_ratio,
-            "answer_diversity_ratio": answer_diversity_ratio,
-            "correct_flags": correct_flags,
-            "results": results,
-        }
-    except Exception as e:
-        print(f"❌ Error evaluating {model_label}: {e}")
+        eval_fn = _evaluate_vllm if eval_engine == "vllm" else _evaluate_hf
         try:
-            del model
-            clear_gpu()
-        except NameError:
-            pass
-        return None
+            metrics = eval_fn(model_path, exp_config, examples, bench)
+        except Exception as e:
+            pipeline_warn(f"Eval failed for {model_label} on {bench}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
 
+        if metrics:
+            all_benchmark_results[bench] = metrics
+            total_correct += metrics.get("correct_count", 0)
+            total_count += metrics.get("total_count", 0)
+            print(
+                f"  {bench}: {metrics['accuracy']:.1%} "
+                f"({metrics['correct_count']}/{metrics['total_count']}) "
+                f"CI=[{metrics['ci_lower']:.1%}, {metrics['ci_upper']:.1%}]"
+            )
 
-# ── multi-model evaluation ───────────────────────────────────────────
+    avg_accuracy = total_correct / total_count if total_count > 0 else 0.0
+    print(f"\n  📊 {model_label} average: {avg_accuracy:.1%} ({total_correct}/{total_count})")
+
+    return {
+        "model_label": model_label,
+        "avg_accuracy": avg_accuracy,
+        "total_correct": total_correct,
+        "total_count": total_count,
+        "per_benchmark": all_benchmark_results,
+    }
 
 
 def run_full_evaluation(
     exp_config: dict,
     model_paths_dict: dict[str, str],
 ) -> tuple[dict, list]:
-    """Evaluate all models, print summary & significance test.
+    """Evaluate all models, print summary.
 
     Returns ``(all_metrics, all_results)``.
     """
-    eval_ds = load_dataset("openai/gsm8k", "main", split=exp_config["eval_split"])
-    max_n = exp_config.get("eval_max_samples")
-    if max_n is not None:
-        eval_ds = eval_ds.select(range(min(max_n, len(eval_ds))))
-
-    questions = [x["question"] for x in eval_ds]
-    gt = {x["question"]: extract_answer_from_ground_truth(x["answer"]) for x in eval_ds}
-
     all_metrics: dict[str, dict] = {}
     all_results: list[dict] = []
 
     for name, path in model_paths_dict.items():
-        m = evaluate_model(exp_config, path, name, questions, gt)
+        m = evaluate_model(exp_config, path, name)
         if m:
             all_metrics[name] = m
-            all_results.extend(m["results"])
-
-    if not all_metrics:
-        pipeline_warn("Eval: all models were skipped or failed. No metrics produced.")
+            for bench_data in m.get("per_benchmark", {}).values():
+                for r in bench_data.get("results", []):
+                    r["Model"] = name
+                    all_results.append(r)
 
     # ── summary table ────────────────────────────────────────────────
-    if all_results:
-        print("\n--- PERFORMANCE SUMMARY ---")
-        rows = [
-            {
-                "Model": m["model_label"],
-                "Accuracy %": m["accuracy"] * 100,
-                "95% CI Lower": m["ci_lower"] * 100,
-                "95% CI Upper": m["ci_upper"] * 100,
-                "CI Width": m["ci_width"] * 100,
-                "Parsed %": m["parsed_answer_ratio"] * 100,
-                "Marker %": m["marker_compliance_ratio"] * 100,
-                "Diversity %": m["answer_diversity_ratio"] * 100,
-                "n": m["total_count"],
-            }
-            for m in all_metrics.values()
-        ]
+    if all_metrics:
+        print(f"\n{'='*60}")
+        print("PERFORMANCE SUMMARY")
+        print(f"{'='*60}")
+        rows = []
+        for name, m in all_metrics.items():
+            row = {"Model": name, "Avg Accuracy %": m["avg_accuracy"] * 100}
+            for bench, bm in m.get("per_benchmark", {}).items():
+                row[f"{bench} %"] = bm["accuracy"] * 100
+            rows.append(row)
         summary_df = pd.DataFrame(rows)
-        try:
-            from IPython.display import display
-
-            display(summary_df)
-        except Exception:
-            print(summary_df.to_string(index=False))
-
-        # ── McNemar's test ───────────────────────────────────────────
-        if "DORADO" in all_metrics and "SFT" in all_metrics:
-            d = np.array(all_metrics["DORADO"]["correct_flags"])
-            s = np.array(all_metrics["SFT"]["correct_flags"])
-            b = int(np.sum(~d & s))
-            c = int(np.sum(d & ~s))
-            p_value = mcnemar_exact_pvalue(b, c)
-            diff = all_metrics["DORADO"]["accuracy"] - all_metrics["SFT"]["accuracy"]
-            print("\n--- STATISTICAL SIGNIFICANCE TEST ---")
-            print(f"McNemar's Test (DORADO vs SFT):")
-            print(f"  Improvement: {diff:.1%}")
-            print(f"  Discordant pairs: b={b}, c={c}")
-            print(f"  p-value: {p_value:.4f}")
-            sig = "✅ Significant" if p_value < 0.05 else "⚠️ NOT significant"
-            print(f"  {sig} at α=0.05")
+        print(summary_df.to_string(index=False))
 
     return all_metrics, all_results
