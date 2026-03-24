@@ -68,11 +68,11 @@ def set_random_seeds(seed: int = 42):
 
 def extract_answer_from_response(text: str) -> str:
     """
-    Unified answer extraction for GSM8K.
+    Fallback answer extraction (GSM8K-style #### markers).
 
-    Returns the last number found in *text* (after ``####`` if present),
-    or ``"None"`` when no number is found.  Must be used consistently
-    during both training and evaluation.
+    Prefer ``eval/utils/parser.py:extract_answer`` for MATH-style ``\\boxed{}``
+    extraction.  This function is kept only as a safety net when eval utils
+    are unavailable.
     """
     if "####" in text:
         text = text.split("####")[-1].strip()
@@ -83,15 +83,6 @@ def extract_answer_from_response(text: str) -> str:
     return _canonicalize_numeric_token(nums[-1])
 
 
-def extract_answer_from_ground_truth(text: str) -> str:
-    """Extract canonical numeric answer from dataset ground-truth text."""
-    text = text.replace(",", "")
-    if "####" in text:
-        text = text.split("####")[-1].strip()
-    nums = re.findall(r"-?\d+(?:/\d+|\.\d+)?", text)
-    if not nums:
-        return "None"
-    return _canonicalize_numeric_token(nums[-1])
 
 
 def _canonicalize_numeric_token(token: str) -> str:
@@ -165,7 +156,6 @@ def cleanup_storage():
         print(f"  ✓ Cleared runtime cache: {runtime_cache}")
 
     artifacts = [
-        "reward_model*",
         "coldstart_dorado*",
         "dorado_final*",
         "dorado_round_*",
@@ -233,7 +223,6 @@ def enforce_storage_budget(
 
     # Step 1: remove run artifacts first
     for pattern in (
-        "reward_model*",
         "coldstart_dorado*",
         "dorado_final*",
         "dorado_round_*",

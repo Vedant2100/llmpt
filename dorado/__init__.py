@@ -3,7 +3,6 @@
 from dorado.utils import (
     clear_gpu,
     set_random_seeds,
-    extract_answer_from_response,
     cleanup_storage,
     enforce_storage_budget,
     pipeline_warn,
