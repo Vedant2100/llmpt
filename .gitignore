@@ -8,7 +8,8 @@ __pycache__/
 
 artifacts/
 results/
-
+tool_env/
+paper/
 # Distribution / packaging
 .Python
 build/
