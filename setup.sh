@@ -22,14 +22,15 @@ fi
 # Upgrade base tools before installing heavy hitters
 pip install -q --upgrade pip setuptools wheel
 
-# Detect installed torch version and match torchvision/torchaudio to it
-TORCH_VER=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+# Detect torch version and force upgrade to 2.4.0 if too old
+# (Accelerate 1.0+ requires torch 2.4+ for torch.amp.GradScaler)
+TORCH_VER=$(python -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null || echo "0.0.0")
 echo "  Detected torch=${TORCH_VER}"
 
-# We are running Math/Text models, so torchvision and torchaudio are completely unnecessary.
-# In fact, broken torchvision C++ extensions crash HuggingFace 'transformers' on import.
-# Let's cleanly rip them out of the container so they stop causing tracebacks!
-pip uninstall -y torchvision torchaudio || true
+if [[ "$(printf '%s\n' "2.4.0" "$TORCH_VER" | sort -V | head -n1)" != "2.4.0" ]]; then
+    echo "  🚀 Upgrading torch to 2.4.0 (required for accelerate/transformers compatibility)..."
+    pip install --upgrade -q torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
+fi
 
 # Install transformers + trl compatible with torch 2.4/2.5 (--no-deps, no torch pull)
 pip install --no-deps -q "transformers>=4.46.0,<4.50.0" "trl>=0.11.0,<0.14.0"
@@ -43,10 +44,11 @@ pip install -q \
 echo ""
 echo "✅ Final versions:"
 python -c "
-import torch, transformers, trl
+import torch, transformers, trl, accelerate
 print(f'  torch={torch.__version__}')
 print(f'  transformers={transformers.__version__}')
 print(f'  trl={trl.__version__}')
+print(f'  accelerate={accelerate.__version__}')
 # Quick sanity: can we import Trainer?
 from transformers import Trainer
 print('  ✅ Trainer imports OK')
