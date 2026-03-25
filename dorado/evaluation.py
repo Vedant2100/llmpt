@@ -142,6 +142,7 @@ def _evaluate_hf(
             "{{ '<|im_start|>assistant\n' }}"
             "{% endif %}"
         )
+    tokenizer.padding_side = "left"
     model.config.pad_token_id = tokenizer.pad_token_id
 
     SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
