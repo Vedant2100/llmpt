@@ -59,6 +59,16 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
     tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.chat_template is None:
+        # Fallback ChatML template for models without one (e.g. SmolLM2-135M)
+        tokenizer.chat_template = (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}"
+            "{{ '<|im_start|>assistant\n' }}"
+            "{% endif %}"
+        )
 
     # ── load model ───────────────────────────────────────────────────
     from dorado.config import make_model_load_kwargs
