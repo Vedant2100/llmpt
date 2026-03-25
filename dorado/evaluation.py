@@ -17,7 +17,7 @@ from dorado.utils import clear_gpu, pipeline_warn
 
 def _setup_eval_imports():
     """Add eval/ directory to sys.path and import answer checking utils."""
-    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reference", "eval")
     if eval_dir not in sys.path:
         sys.path.insert(0, eval_dir)
     try:
@@ -33,20 +33,11 @@ def _setup_eval_imports():
 
 def _load_benchmark(benchmark_name: str, max_samples: int | None = None) -> list[dict]:
     """Load benchmark data from eval/data/{name}/test.jsonl."""
-    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reference", "eval")
     data_file = os.path.join(eval_dir, "data", benchmark_name, "test.jsonl")
 
     if not os.path.exists(data_file):
         pipeline_warn(f"Benchmark data not found: {data_file}")
-        if benchmark_name == "math":
-            print("Fallback: loading MATH from HuggingFace...")
-            from datasets import load_dataset
-            ds = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default", split="test")
-            examples = [{"problem": x["problem"], "solution": x["solution"]} for x in ds]
-            if max_samples and max_samples < len(examples):
-                examples = examples[:max_samples]
-            print(f"📦 Loaded {len(examples)} examples from HuggingFace")
-            return examples
         return []
 
     examples = []

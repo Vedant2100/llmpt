@@ -17,15 +17,11 @@ def _load_math_prompts(exp_config: dict) -> tuple[list[str], dict[str, str]]:
 
     Returns (questions, ground_truth_map).
     """
-    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reference", "eval")
     math_data_file = os.path.join(eval_dir, "data", "math", "test.jsonl")
 
     if not os.path.exists(math_data_file):
-        pipeline_warn(
-            f"MATH data not found at {math_data_file}. "
-            f"Attempting to load from HuggingFace datasets..."
-        )
-        return _load_math_from_hf(exp_config)
+        raise FileNotFoundError(f"Original MATH data not found at {math_data_file}")
 
     questions = []
     gt_map = {}
@@ -46,18 +42,6 @@ def _load_math_prompts(exp_config: dict) -> tuple[list[str], dict[str, str]]:
     print(f"📦 Loaded {len(questions)} MATH prompts from {math_data_file}")
     return questions, gt_map
 
-
-def _load_math_from_hf(exp_config: dict) -> tuple[list[str], dict[str, str]]:
-    """Fallback: load MATH dataset from HuggingFace."""
-    from datasets import load_dataset
-
-    count = exp_config.get("math_prompt_count", 500)
-    ds = load_dataset(
-        "DigitalLearningGmbH/MATH-lighteval", "default", split=f"train[:{count}]"
-    )
-    questions = [x["problem"] for x in ds]
-    gt_map = {x["problem"]: x["solution"] for x in ds}
-    print(f"📦 Loaded {len(questions)} MATH prompts from HuggingFace")
     return questions, gt_map
 
 

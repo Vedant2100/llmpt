@@ -67,8 +67,8 @@ class ArmoRMScorer:
 def _load_math_answer_checker():
     """Load the eval/ answer checking utilities for verifiable reward."""
     import sys
-    # Add eval/ to path so we can import its utils
-    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "eval")
+    # Add reference/eval/ to path so we can import its utils
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reference", "eval")
     if eval_dir not in sys.path:
         sys.path.insert(0, eval_dir)
     try:
