@@ -21,6 +21,9 @@ spec:
         - /bin/bash
         - -c
         - |
+          # The PyTorch image does not have git by default, so we install it first!
+          apt-get update && apt-get install -y git
+          
           # Use the persistent volume for caching
           export HF_HOME="/data/.cache/huggingface"
           
@@ -37,6 +40,7 @@ spec:
           
           # Setup environment and run!
           bash setup.sh
+          mkdir -p /data/llmpt/results
           python main.py --profile fast 2>&1 | tee /data/llmpt/results/k8s_run.log
         volumeMounts:
         - mountPath: /data

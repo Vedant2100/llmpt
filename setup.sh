@@ -7,23 +7,10 @@ echo "🔧 Fixing environment..."
 TORCH_VER=$(python -c "import torch; print(torch.__version__.split('+')[0])")
 echo "  Detected torch=${TORCH_VER}"
 
-# Map torch version to compatible torchvision
-case "$TORCH_VER" in
-    2.4.*)  TV_VER="0.19.1" ; TA_VER="2.4.1" ;;
-    2.5.*)  TV_VER="0.20.1" ; TA_VER="2.5.1" ;;
-    *)      TV_VER="" ; TA_VER="" ;;  # skip if unknown
-esac
-
-# Fix torchvision/torchaudio to match torch (--no-deps so they don't pull torch)
-if [ -n "$TV_VER" ]; then
-    echo "  Installing torchvision==${TV_VER} torchaudio==${TA_VER} to match torch"
-    pip install --no-deps -q \
-        "torchvision==${TV_VER}+cu121" "torchaudio==${TA_VER}+cu121" \
-        --index-url https://download.pytorch.org/whl/cu121 2>/dev/null || \
-    pip install --no-deps -q \
-        "torchvision==${TV_VER}" "torchaudio==${TA_VER}" \
-        --index-url https://download.pytorch.org/whl/cu121
-fi
+# We are running Math/Text models, so torchvision and torchaudio are completely unnecessary.
+# In fact, broken torchvision C++ extensions crash HuggingFace 'transformers' on import.
+# Let's cleanly rip them out of the container so they stop causing tracebacks!
+pip uninstall -y torchvision torchaudio || true
 
 # Install transformers + trl compatible with torch 2.4/2.5 (--no-deps, no torch pull)
 pip install --no-deps -q "transformers>=4.46.0,<4.50.0" "trl>=0.11.0,<0.14.0"
