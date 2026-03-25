@@ -155,6 +155,10 @@ def run_dpo_training(
 
     # ── train ────────────────────────────────────────────────────────
     print(f"Initializing DPOTrainer ({len(dpo_list)} pairs)...")
+    
+    # 🔴 CRITICAL MULTI-GPU HANG BYPASS: Prevent DataParallel completely!
+    setattr(model, "is_model_parallel", True)
+    
     trainer = DPOTrainer(
         model=model,
         args=dpo_args,

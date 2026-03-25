@@ -147,6 +147,12 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
 
     # ── train ────────────────────────────────────────────────────────
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    
+    # 🔴 CRITICAL MULTI-GPU HANG BYPASS: Prevent DataParallel completely!
+    # If the pod has 4 GPUs, Trainer tries to wrap the model in DataParallel, causing instant deadlocks on PEFT graphs.
+    # By spoofing 'is_model_parallel', we force Trainer to leave the model solely on GPU 0.
+    setattr(model, "is_model_parallel", True)
+    
     trainer = Trainer(
         model=model,
         args=args,
