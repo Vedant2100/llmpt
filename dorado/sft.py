@@ -86,6 +86,8 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         )
         model = get_peft_model(model, peft_config)
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
         model.print_trainable_parameters()
     else:
         # Full fine-tuning: enable gradient for all params
