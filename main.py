@@ -14,6 +14,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ── Robust Hardware Detection & Environment Hardening ───────────────
+try:
+    from dorado.utils import harden_environment
+    harden_environment()
+except ImportError:
+    # If dorado isn't in path yet, we'll try again after path setup
+    pass
+
 
 # ── Environment setup (must happen before torch import) ──────────────
 
@@ -92,6 +100,10 @@ if len(selected) > 1:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
+
+# Now that path is set, ensure environment is hardened before any further imports
+from dorado.utils import harden_environment
+harden_environment()
 
 
 # ── Main ─────────────────────────────────────────────────────────────

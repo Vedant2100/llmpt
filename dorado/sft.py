@@ -13,7 +13,11 @@ from transformers import (
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-from dorado.utils import clear_gpu, get_mixed_precision_kwargs
+from dorado.utils import (
+    clear_gpu,
+    get_mixed_precision_kwargs,
+    is_deepspeed_functional,
+)
 
 
 def _format_chat_example(example: dict, tokenizer) -> dict:
@@ -128,6 +132,13 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
 
     # ── training args ────────────────────────────────────────────────
     mp_kwargs = get_mixed_precision_kwargs()
+    
+    # Robust DeepSpeed check: only use if functional (has compiler/libaio)
+    ds_config = exp_config.get("deepspeed_config")
+    if ds_config and not is_deepspeed_functional():
+        print("⚠️  DeepSpeed is installed but non-functional (missing compiler). Falling back to native training.")
+        ds_config = None
+
     args = TrainingArguments(
         output_dir=output_dir,
         per_device_train_batch_size=exp_config.get("sft_batch_size", 4),
@@ -140,6 +151,7 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
         save_strategy="no",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        deepspeed=ds_config,
         **mp_kwargs,
         report_to="none",
         seed=exp_config.get("random_seed", 42),

@@ -59,8 +59,8 @@ PROFILES = {
         "iterative_dpo_rounds": 1,
     },
     "full": {
-        # Model — 7B paper target, NRP cluster
-        "base_model": "Qwen/Qwen2.5-Math-7B",
+        # Model — 4B paper target (Qwen3), NRP cluster
+        "base_model": "Qwen/Qwen3-4B-Base",
         "finetuning_type": "full",
         # SFT — paper-exact
         "sft_dataset_name": "HuggingFaceH4/ultrachat_200k",

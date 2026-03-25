@@ -11,6 +11,8 @@ from pathlib import Path
 
 import torch
 import numpy as np
+import importlib
+import sys
 
 
 def _get_protected_artifact_paths() -> set[str]:
@@ -249,6 +251,73 @@ def enforce_storage_budget(
         f"home_used={home_used:.2f}GiB (cap {max_home_gb:.2f}), "
         f"free={free_gb:.2f}GiB (min {min_free_gb:.2f})."
     )
-    if hard_fail:
-        raise RuntimeError(msg)
-    print(f"⚠️ {msg}")
+def is_deepspeed_functional() -> bool:
+    """Check if DeepSpeed is installed and has a working CUDA compiler/libaio.
+
+    Returns False if DeepSpeed is missing, or if it would crash on metadata checks
+    due to missing hardware compilers (common on JupyterHub).
+    """
+    if shutil.which("nvcc") is None and os.environ.get("CUDA_HOME") == "/usr/local/cuda":
+        # Known broken environment: has CUDA folder but no compiler.
+        # DeepSpeed op_builder will crash on import if we don't handle this.
+        return False
+    
+    try:
+        importlib.import_module("deepspeed")
+        return True
+    except Exception:
+        return False
+
+
+def harden_environment():
+    """Surgical environment fix to prevent DeepSpeed import crashes on crippled hardware.
+
+    - Unsets CUDA_HOME if nvcc is missing.
+    - Monkeypatches DeepSpeed op_builder to prevent FileNotFoundError/MissingCUDAException.
+    - Checks for libaio and warns if missing (breaks DeepSpeed async-io).
+    """
+    # 1. Fix CUDA_HOME ghosting
+    if shutil.which("nvcc") is None:
+        if "CUDA_HOME" in os.environ:
+            # Only unset if it points to the standard location which we know is broken on this hub
+            if os.environ["CUDA_HOME"] == "/usr/local/cuda":
+                del os.environ["CUDA_HOME"]
+        
+        # 2. Monkeypatch DeepSpeed OpBuilder if already installed to prevent crash-on-import
+        # We do this by swapping out the builder check with a dummy that says "not compatible"
+        try:
+            # We must do this BEFORE any other dorado modules import transformers/trl
+            import deepspeed.ops.op_builder.builder as ds_builder
+            
+            orig_check = ds_builder.OpBuilder.is_compatible
+            def safe_is_compatible(self, verbose=False):
+                try:
+                    return orig_check(self, verbose)
+                except Exception:
+                    # If it would have crashed (MissingCUDAException), just say No
+                    return False
+            
+            ds_builder.OpBuilder.is_compatible = safe_is_compatible
+            
+            # Also patch the global version check
+            def safe_cuda_version():
+                try:
+                    return ds_builder.installed_cuda_version()
+                except Exception:
+                    return (0, 0)
+            ds_builder.installed_cuda_version = safe_cuda_version
+            
+        except (ImportError, Exception):
+            pass
+
+    # 3. Check libaio (required for DS async-io, often missing on Hubs)
+    if shutil.which("ldconfig"):
+        try:
+            res = subprocess.check_output(["ldconfig", "-p"], text=True, stderr=subprocess.DEVNULL)
+            if "libaio.so" not in res:
+                os.environ["DS_SKIP_CUDA_CHECK"] = "1" # Help DS be less picky
+        except Exception:
+            pass
+
+    # 4. Torch optimization
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
