@@ -38,6 +38,15 @@ def _load_benchmark(benchmark_name: str, max_samples: int | None = None) -> list
 
     if not os.path.exists(data_file):
         pipeline_warn(f"Benchmark data not found: {data_file}")
+        if benchmark_name == "math":
+            print("Fallback: loading MATH from HuggingFace...")
+            from datasets import load_dataset
+            ds = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default", split="test")
+            examples = [{"problem": x["problem"], "solution": x["solution"]} for x in ds]
+            if max_samples and max_samples < len(examples):
+                examples = examples[:max_samples]
+            print(f"📦 Loaded {len(examples)} examples from HuggingFace")
+            return examples
         return []
 
     examples = []
@@ -133,6 +142,15 @@ def _evaluate_hf(
     tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.chat_template is None:
+        tokenizer.chat_template = (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}"
+            "{{ '<|im_start|>assistant\n' }}"
+            "{% endif %}"
+        )
     model.config.pad_token_id = tokenizer.pad_token_id
 
     SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
@@ -232,6 +250,17 @@ def _evaluate_vllm(
 
     BASE = exp_config["base_model"]
     tokenizer = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.chat_template is None:
+        tokenizer.chat_template = (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}"
+            "{{ '<|im_start|>assistant\n' }}"
+            "{% endif %}"
+        )
 
     SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
 
