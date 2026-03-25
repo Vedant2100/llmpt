@@ -102,6 +102,15 @@ def run_candidate_generation(
     tok = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    if tok.chat_template is None:
+        tok.chat_template = (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}"
+            "{{ '<|im_start|>assistant\n' }}"
+            "{% endif %}"
+        )
 
     SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
 
