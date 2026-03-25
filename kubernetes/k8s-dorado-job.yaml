@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: dorado-fast-run-
+spec:
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nvidia.com/gpu.product
+                operator: In
+                values:
+                - NVIDIA-L4
+      containers:
+      - name: dorado-worker
+        image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Use the persistent volume for caching
+          export HF_HOME="/data/.cache/huggingface"
+          
+          # Clone the repository dynamically (make sure you pushed your changes!)
+          cd /data
+          if [ -d "llmpt" ]; then
+            cd llmpt
+            git pull
+          else
+            # REPLACE THIS URL WITH YOUR ACTUAL GITHUB REPO URL!
+            git clone -b main https://github.com/vedant2100/llmpt.git
+            cd llmpt
+          fi
+          
+          # Setup environment and run!
+          bash setup.sh
+          python main.py --profile fast 2>&1 | tee /data/llmpt/results/k8s_run.log
+        volumeMounts:
+        - mountPath: /data
+          name: dorado-datavol
+        resources:
+          limits:
+            memory: 64Gi
+            cpu: "16"
+            nvidia.com/gpu: 4
+          requests:
+            memory: 64Gi
+            cpu: "16"
+            nvidia.com/gpu: 4
+      volumes:
+      - name: dorado-datavol
+        persistentVolumeClaim:
+          claimName: dorado-datavol
+      restartPolicy: Never
+  backoffLimit: 0
