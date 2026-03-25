@@ -12,79 +12,31 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # ── Profile definitions ──────────────────────────────────────────────
 
 PROFILES = {
-    "smoke": {
-        # Model
-        "base_model": "HuggingFaceTB/SmolLM2-135M",
-        "finetuning_type": "lora",  # "lora" | "full"
-        # SFT
-        "sft_dataset_name": "HuggingFaceH4/ultrachat_200k",
-        "sft_dataset_split": "train_sft",
-        "sft_samples": 50,
-        "sft_cutoff_len": 512,
-        "sft_epochs": 1,
-        "sft_lr": 2e-5,
-        "sft_lr_scheduler": "cosine",
-        "sft_warmup_ratio": 0.1,
-        "sft_batch_size": 2,
-        # LoRA (only used when finetuning_type == "lora")
-        "lora_r": 8,
-        "lora_alpha": 16,
-        # Generation
-        "math_prompt_source": "MATH",
-        "math_prompt_count": 20,
-        "candidates_per_question": 2,
-        "temperature": 1.0,
-        "max_new_tokens_gen": 512,
-        # RM
-        "rm_strategy": "skip",  # "skip" | "armo"
-        # DPO
-        "dpo_beta": 0.1,
-        "dpo_lr": 5e-7,
-        "dpo_lr_scheduler": "cosine",
-        "dpo_warmup_ratio": 0.1,
-        "dpo_epochs": 1,
-        "dpo_batch_size": 2,
-        "dpo_max_length": 512,
-        "dpo_max_grad_norm": 3.0,
-        "gradient_accumulation_steps": 1,
-        # Eval
-        "eval_benchmarks": ["math"],
-        "eval_max_samples": 50,
-        "eval_engine": "hf",  # "hf" | "vllm"
-        "max_new_tokens_eval": 1024,
-        "eval_batch_size": 2,
-        # General
-        "random_seed": 42,
-        "quantization_bits": 0,
-        "deepspeed_config": None,
-        "iterative_dpo_rounds": 1,
-    },
     "fast": {
-        # Model
+        # Model — 1.5B for JupyterHub single-GPU; paper-faithful methodology
         "base_model": "Qwen/Qwen2.5-Math-1.5B",
-        "finetuning_type": "lora",
-        # SFT
+        "finetuning_type": "full",
+        # SFT — matches paper hyperparams, tiny data scale
         "sft_dataset_name": "HuggingFaceH4/ultrachat_200k",
         "sft_dataset_split": "train_sft",
-        "sft_samples": 1000,
+        "sft_samples": 200,
         "sft_cutoff_len": 2048,
         "sft_epochs": 3,
         "sft_lr": 2e-5,
         "sft_lr_scheduler": "cosine",
         "sft_warmup_ratio": 0.1,
         "sft_batch_size": 4,
-        # LoRA
+        # LoRA (unused — full fine-tuning)
         "lora_r": 16,
         "lora_alpha": 32,
-        # Generation
+        # Generation — tiny scale
         "math_prompt_source": "MATH",
-        "math_prompt_count": 500,
+        "math_prompt_count": 100,
         "candidates_per_question": 5,
         "temperature": 1.0,
-        "max_new_tokens_gen": 2048,
+        "max_new_tokens_gen": 1024,
         # RM
         "rm_strategy": "armo",
-        # DPO
         "dpo_beta": 0.1,
         "dpo_lr": 5e-7,
         "dpo_lr_scheduler": "cosine",
@@ -93,24 +45,24 @@ PROFILES = {
         "dpo_batch_size": 4,
         "dpo_max_length": 2048,
         "dpo_max_grad_norm": 3.0,
-        "gradient_accumulation_steps": 4,
+        "gradient_accumulation_steps": 8,
         # Eval
         "eval_benchmarks": ["math"],
-        "eval_max_samples": 200,
+        "eval_max_samples": 50,
         "eval_engine": "vllm",
         "max_new_tokens_eval": 2048,
         "eval_batch_size": 4,
         # General
         "random_seed": 42,
         "quantization_bits": 0,
-        "deepspeed_config": None,
+        "deepspeed_config": "examples/deepspeed/ds_z3_config.json",
         "iterative_dpo_rounds": 1,
     },
     "full": {
-        # Model
+        # Model — 7B paper target, NRP cluster
         "base_model": "Qwen/Qwen2.5-Math-7B",
         "finetuning_type": "full",
-        # SFT
+        # SFT — paper-exact
         "sft_dataset_name": "HuggingFaceH4/ultrachat_200k",
         "sft_dataset_split": "train_sft",
         "sft_samples": 10000,
@@ -120,10 +72,10 @@ PROFILES = {
         "sft_lr_scheduler": "cosine",
         "sft_warmup_ratio": 0.1,
         "sft_batch_size": 4,
-        # LoRA (not used in full profile, but kept for override flexibility)
+        # LoRA (unused — full fine-tuning)
         "lora_r": 16,
         "lora_alpha": 32,
-        # Generation
+        # Generation — paper scale
         "math_prompt_source": "MATH",
         "math_prompt_count": 8000,
         "candidates_per_question": 5,
@@ -131,7 +83,6 @@ PROFILES = {
         "max_new_tokens_gen": 2048,
         # RM
         "rm_strategy": "armo",
-        # DPO
         "dpo_beta": 0.1,
         "dpo_lr": 5e-7,
         "dpo_lr_scheduler": "cosine",
@@ -140,8 +91,8 @@ PROFILES = {
         "dpo_batch_size": 4,
         "dpo_max_length": 2048,
         "dpo_max_grad_norm": 3.0,
-        "gradient_accumulation_steps": 4,
-        # Eval
+        "gradient_accumulation_steps": 8,
+        # Eval — full benchmark suite
         "eval_benchmarks": ["math", "minerva", "amc", "aime", "olympiadbench"],
         "eval_max_samples": None,  # use full benchmark
         "eval_engine": "vllm",
@@ -162,7 +113,7 @@ def get_profile(name: str = "fast", overrides: dict | None = None) -> dict:
     Parameters
     ----------
     name : str
-        One of "smoke", "fast", or "full".
+        One of "fast" or "full".
     overrides : dict, optional
         Key-value pairs to override specific profile settings.
     """

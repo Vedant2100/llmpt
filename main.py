@@ -2,10 +2,9 @@
 """Dorado: Two-Stage Reasoning Post-Training — Main Entry Point.
 
 Usage:
-    python main.py                          # default: smoke profile
-    python main.py --profile fast           # quick experiments on 1.5B
-    python main.py --profile full           # paper-faithful 7B run
-    python main.py --profile fast --override math_prompt_count=1000
+    python main.py                          # default: fast profile (1.5B, JupyterHub-friendly)
+    python main.py --profile full           # paper-faithful 7B run (NRP cluster)
+    python main.py --profile fast --override math_prompt_count=200
 """
 
 import argparse
@@ -127,9 +126,9 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        choices=["smoke", "fast", "full"],
-        default="smoke",
-        help="Experiment profile (default: smoke)",
+        choices=["fast", "full"],
+        default="fast",
+        help="Experiment profile (default: fast)",
     )
     parser.add_argument(
         "--override",
