@@ -293,4 +293,3 @@ def make_results_paths(base_dir: str = "results") -> tuple[str, str, str]:
         f"{results_dir}/dorado_results.xlsx",
         f"{results_dir}/dorado_checkpoint.xlsx",
     )
-""", "Description": "Complete rewrite of config.py with profile system (smoke/fast/full), updated hyperparameters matching Shangjian's yaml, and backward-compatible grid builder.", "Complexity": 7, "EmptyFile": false, "IsArtifact": false}
