@@ -53,7 +53,7 @@ def _load_math_from_hf(exp_config: dict) -> tuple[list[str], dict[str, str]]:
 
     count = exp_config.get("math_prompt_count", 500)
     ds = load_dataset(
-        "DigitalLearningGmbH/MATH-lighteval", "all", split=f"train[:{count}]", trust_remote_code=True
+        "DigitalLearningGmbH/MATH-lighteval", "default", split=f"train[:{count}]"
     )
     questions = [x["problem"] for x in ds]
     gt_map = {x["problem"]: x["solution"] for x in ds}
