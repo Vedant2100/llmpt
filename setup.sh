@@ -4,17 +4,19 @@ set -e
 echo "🔧 Fixing environment..."
 
 # ── CUDA Setup (Fixes DeepSpeed compilation errors) ──────────────────
-export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
-if [ -d "$CUDA_HOME" ]; then
+# Search for nvcc to find CUDA_HOME
+NVCC_PATH=$(which nvcc || find /usr/local/cuda -name nvcc -print -quit 2>/dev/null || find /usr/bin -name nvcc -print -quit 2>/dev/null || true)
+
+if [ -n "$NVCC_PATH" ]; then
+    export CUDA_HOME=$(dirname $(dirname $NVCC_PATH))
     export PATH=$CUDA_HOME/bin:$PATH
     export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-    echo "  Found CUDA at $CUDA_HOME"
+    export DS_BUILD_OPS=1
+    echo "  Found CUDA at $CUDA_HOME (nvcc: $NVCC_PATH)"
 else
-    echo "  ⚠️ CUDA_HOME ($CUDA_HOME) not found. DeepSpeed might fail to compile kernels."
+    echo "  ⚠️ nvcc (CUDA compiler) not found. Disabling DeepSpeed JIT ops fallback..."
+    export DS_BUILD_OPS=0
 fi
-
-# Force DeepSpeed to try building ops if nvcc is found
-export DS_BUILD_OPS=1
 
 # Detect installed torch version and match torchvision/torchaudio to it
 TORCH_VER=$(python -c "import torch; print(torch.__version__.split('+')[0])")
