@@ -5,7 +5,7 @@ import os
 import datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-from peft import LoraConfig, PeftModel
+from peft import LoraConfig, PeftModel, get_peft_model
 from trl import DPOConfig, DPOTrainer
 
 from dorado.utils import clear_gpu, pipeline_warn, get_mixed_precision_kwargs
@@ -143,6 +143,15 @@ def run_dpo_training(
             task_type="CAUSAL_LM",
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         )
+        # Apply PEFT wrapper to initialize the PEFT hooks
+        model = get_peft_model(model, peft_config)
+        
+        # 🔴 CRITICAL MULTI-GPU HANG FIX 
+        # PEFT + Gradient Checkpointing + DP natively shreds backward passes.
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+            
+        model.print_trainable_parameters()
 
     # ── train ────────────────────────────────────────────────────────
     print(f"Initializing DPOTrainer ({len(dpo_list)} pairs)...")
