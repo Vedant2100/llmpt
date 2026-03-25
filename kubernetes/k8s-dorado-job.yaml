@@ -40,6 +40,15 @@ spec:
           
           # Setup environment and run!
           bash setup.sh
+          
+          # 🔴 CRITICAL CLUSTER FIX: NRP Nautilus virtualization layer blocks native GPU PCI P2P!
+          # If PyTorch attempts a native PCIe gradient synchronization, it silently deadlocks 100% of the time.
+          # We explicitly force NCCL to route through system RAM and verbosely log itself to stop the freeze.
+          export NCCL_P2P_DISABLE=1
+          export NCCL_IB_DISABLE=1
+          export NCCL_DEBUG=INFO
+
+          echo "🚀 Starting Python Execution (multi-GPU DDP mode)..."
           mkdir -p /data/llmpt/results
           python main.py --profile fast 2>&1 | tee /data/llmpt/results/k8s_run.log
         volumeMounts:
