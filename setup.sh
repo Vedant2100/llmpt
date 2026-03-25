@@ -17,16 +17,15 @@ pip install --no-deps -q "transformers>=4.46.0,<4.50.0" "trl>=0.11.0,<0.14.0"
 
 # Install remaining deps normally
 pip install -q \
-    accelerate datasets peft bitsandbytes huggingface_hub \
+    accelerate datasets peft bitsandbytes huggingface_hub rich deepspeed \
     "filelock>=3.12.0" openpyxl \
     sympy==1.12 latex2sympy2 word2number regex pebble timeout-decorator
 
 echo ""
 echo "✅ Final versions:"
 python -c "
-import torch, transformers, trl, torchvision
+import torch, transformers, trl
 print(f'  torch={torch.__version__}')
-print(f'  torchvision={torchvision.__version__}')
 print(f'  transformers={transformers.__version__}')
 print(f'  trl={trl.__version__}')
 # Quick sanity: can we import Trainer?
