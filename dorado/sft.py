@@ -85,16 +85,16 @@ def run_sft_stage(exp_config: dict, output_dir: str = "coldstart_dorado") -> str
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Full fine-tuning: {trainable:,}/{total_params:,} params trainable")
 
-    # ── load dataset ─────────────────────────────────────────────────
+    # ── load dataset (stream to save disk) ─────────────────────────
     dataset_name = exp_config.get("sft_dataset_name", "HuggingFaceH4/ultrachat_200k")
     dataset_split = exp_config.get("sft_dataset_split", "train_sft")
     sft_samples = exp_config.get("sft_samples", 5000)
 
-    dataset = load_dataset(
-        dataset_name,
-        split=f"{dataset_split}[:{sft_samples}]",
-    )
-    print(f"📦 SFT dataset: {dataset_name} ({len(dataset)} samples)")
+    from datasets import Dataset
+    streamed = load_dataset(dataset_name, split=dataset_split, streaming=True)
+    rows = list(streamed.take(sft_samples))
+    dataset = Dataset.from_list(rows)
+    print(f"📦 SFT dataset: {dataset_name} ({len(dataset)} samples, streamed)")
 
     # ── tokenize with chat template ──────────────────────────────────
     cutoff_len = exp_config.get("sft_cutoff_len", 2048)
